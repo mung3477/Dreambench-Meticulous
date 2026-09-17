@@ -103,8 +103,12 @@ VLM(Visual-Language Model) 및 LLM을 호출하여 루브릭 생성, 정합성 �
 | **`.venv-FLUX-Kontext`** | **Python 3.12** (3.12.13) | [`requirements_sample.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_sample.txt) | FLUX-Kontext, FLUX-Klein, Qwen-Image-Edit 등 샘플링 |
 | **`.venv-niihau-11112`** | **Python 3.12** (3.12.13) | [`requirements_eval.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_eval.txt) | Qwen-VL 기반 루브릭 생성, DreamBench++, VIEScore 등 평가 |
 | **`.venv-qwen-reranker`**| **Python 3.10** (3.10.20) | [`requirements_qwen-rereanker.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_qwen-rereanker.txt) | Qwen3-VL-Reranker-2B 유사도 순위 평가 |
-| **`.venv-vllm`** | **Python 3.11** (3.11.15) | [`requirements_vllm.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_vllm.txt) | vLLM 기반 초고속 대량 추론 파이프라인 |
-| *(CLIP/DINO 환경)* | **Python 3.11+** | [`requirements_clip-dino.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_clip-dino.txt) | CLIP 및 DINOv2 기반 임베딩 코사인 유사도 평가 (`TypeAlias` 지원 필요) |
+| **`.venv-vllm`** | **Python 3.11** (3.11.15) | [`requirements_vllm.txt`](requirements_vllm.txt) | vLLM 기반 초고속 대량 추론 파이프라인 |
+| *(CLIP/DINO 환경)* | **Python 3.11+** | [`requirements_clip-dino.txt`](requirements_clip-dino.txt) | CLIP 및 DINOv2 기반 임베딩 코사인 유사도 평가 (`TypeAlias` 지원 필요) |
+
+> [!WARNING]
+> **환경 호환성 유의 사항 (Host GPU, Driver & CUDA Compatibility)**:
+> 호스트 시스템의 GPU 아키텍처(예: A100, H100 등), NVIDIA 드라이버 버전 및 호스트 CUDA/Toolkit 환경에 따라 `requirements_vllm.txt`에 명시된 패키지 의존성(특히 `torch`, `xformers`, `outlines`, `flashinfer`, `nvidia-*` CUDA 런타임 라이브러리)의 호환 버전이 달라질 수 있습니다. 다른 머신으로 이전하거나 환경을 재구축할 때는 호스트의 GPU 사양과 드라이버 버전에 맞춰 가상환경 패키지 구성을 유의하여 조정해야 합니다.
 
 ---
 
