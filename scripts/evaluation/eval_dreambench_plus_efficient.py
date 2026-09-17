@@ -290,7 +290,7 @@ def main():
     parser.add_argument('--subject', type=str, default=None, help="Process only a specific subject")
     parser.add_argument('--model', type=str, nargs="+", default=None, help="Process specific model name(s)")
     parser.add_argument('--model_name', type=str, default='Qwen/Qwen3-VL-32B-Instruct', help="Pretrained VLM name/path")
-    parser.add_argument('--prompts_dir', type=str, default='../../prompts', help="Directory containing prompt files")
+    parser.add_argument('--prompts_dir', type=str, default='/root/Desktop/workspace/woosung/commercial-dreambench/prompts', help="Directory containing prompt files")
     parser.add_argument('--out_dir', type=str, default='/tmp', help="Temp output folder for resizing")
     parser.add_argument('--max_retry', type=int, default=3, help="Max retry limit for VLM parsing")
     parser.add_argument('--remove_bg', type=str, default="False", help="Evaluate against background-removed reference image ('True' or 'False')")
