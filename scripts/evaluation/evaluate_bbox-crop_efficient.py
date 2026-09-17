@@ -863,24 +863,65 @@ class VLMDetector:
         self.engine_type = "transformers"
         print("[Engine] Transformers backend initialized.")
 
+    def _get_rel_path(self, image_path: str) -> str:
+        p_str = str(image_path).replace("\\", "/")
+        p = Path(image_path)
+        try:
+            return p.resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except Exception:
+            pass
+
+        markers = [
+            "commercial-dreambench/",
+            "samples/",
+            "assets/",
+            "outputs/",
+            "data/"
+        ]
+        for marker in markers:
+            if marker in p_str:
+                if marker == "commercial-dreambench/":
+                    return p_str.split(marker, 1)[1]
+                return marker + p_str.split(marker, 1)[1]
+
+        return p.name
+
     def get_cache_key(self, image_path: str, rubric_titles: List[str]) -> str:
         titles_str = "_".join(sorted(rubric_titles))
         p_str = str(image_path)
         abs_p = os.path.abspath(p_str)
-        candidates = [
+        rel_p = self._get_rel_path(image_path)
+        fname = Path(image_path).name
+
+        # 1. Primary portable key (environment-agnostic)
+        portable_h = hashlib.md5((rel_p + "_" + titles_str).encode("utf-8")).hexdigest()
+        portable_key = f"{fname}_{portable_h}"
+        if portable_key in self.cache:
+            return portable_key
+
+        # 2. Legacy candidates (for backward compatibility with unmigrated caches)
+        legacy_candidates = [
             p_str,
             abs_p,
             abs_p.replace("/workspace/", "/root/Desktop/workspace/"),
-            abs_p.replace("/root/Desktop/workspace/", "/workspace/")
+            abs_p.replace("/root/Desktop/workspace/", "/workspace/"),
+            f"/root/Desktop/workspace/woosung/commercial-dreambench/{rel_p}",
+            f"/workspace/woosung/commercial-dreambench/{rel_p}",
+            f"/root/Desktop/workspace/commercial-dreambench/{rel_p}",
+            f"/workspace/commercial-dreambench/{rel_p}",
+            f"/workspace/{rel_p}",
+            f"/root/Desktop/workspace/{rel_p}",
         ]
-        for cand in candidates:
+        for cand in legacy_candidates:
             h = hashlib.md5((cand + "_" + titles_str).encode("utf-8")).hexdigest()
-            k = f"{Path(image_path).name}_{h}"
+            k = f"{fname}_{h}"
             if k in self.cache:
-                return k
-        # Default canonical key
-        h = hashlib.md5((abs_p + "_" + titles_str).encode("utf-8")).hexdigest()
-        return f"{Path(image_path).name}_{h}"
+                # Auto-alias legacy hit to portable key in memory so it persists portably
+                self.cache[portable_key] = self.cache[k]
+                return portable_key
+
+        # Default canonical key for new detections: portable repo-relative key
+        return portable_key
 
     def batch_detect_bboxes(
         self,
