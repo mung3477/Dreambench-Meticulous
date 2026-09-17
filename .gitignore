@@ -50,3 +50,4 @@ scripts/evaluation/visualize_rank_alignment_pairs.py
 scripts/evaluation/visualize_scores.py
 
 scripts/utils
+scripts/evaluation/migrate_bbox_cache.py
