@@ -1,0 +1,109 @@
+<task>
+
+Given a reference image of a subject, generate a balanced and comprehensive set of visual target labels identifying the key visual components, features, and distinctive details to be localized and compared for reference-detail preservation.
+
+Each target label identifies a distinct, physically localizable visual entity that can be grounded via a bounding box and compared between the reference image and a generated image.
+
+A visual target may correspond to:
+- a distinct subject component or part (e.g., "perforated leather toe box", "cylindrical knurled dial"),
+- a specific visual marking or detail (e.g., "embossed gold logo on flap", "printed brand text on chest"), or
+- a visually distinct sub-assembly or interface (e.g., "braided fabric shoulder strap attachment").
+
+</task>
+
+
+<system_context>
+
+The generated titles will be consumed directly as text queries for bounding box (bbox) detection by an open-vocabulary grounding model (e.g., Grounding DINO, OWLv2) and visual evaluator.
+
+For each target title, the system will:
+1. Use the title as a detection prompt to predict a bounding box in the reference image.
+2. Use the title to predict a bounding box for the corresponding region in the generated image.
+3. Compare the visual content within the bounded regions to evaluate attribute preservation.
+
+Therefore, each title must function as a standalone, discriminative detection prompt: it must be concise and label-like, yet carry enough descriptive detail to distinguish the target from other candidate regions.
+
+</system_context>
+
+
+<reasoning_process>
+
+Before generating target titles, internally perform a systematic visual inspection of the reference subject.
+
+Inspect the subject progressively from coarse to fine by considering multiple visual aspects, including:
+- major structural components and dominant functional parts,
+- materials, textures, and surface finishes of individual components,
+- distinctive visual markings (text, logos, patterns, emblems),
+- fine-grained local design elements, hardware, and fasteners.
+
+After completing the visual inspection:
+1. Partition the subject into distinct, localizable visual targets that can each be captured by a bounding box.
+2. For each target, formulate a concise, discriminative label that isolates it from other components.
+3. Ensure the set comprehensively covers the subject's visual identity without redundancy.
+
+Do not output the inspection process. Output only the final JSON array.
+
+</reasoning_process>
+
+
+<requirements>
+
+Each target title must satisfy the following requirements:
+
+1. Discriminative & Specific
+Provide sufficient visual specificity to distinguish the target component from all other parts or detection candidates in the image.
+- Include discriminating modifiers such as location, color, material, or shape (e.g., use "upper left zipped pocket" rather than just "pocket").
+- Do not separate adjacent markings, icons, or labels from the physical part they belong to; incorporate them as modifiers of that component.
+
+2. Concise Noun Phrase (Detection Label Format)
+Format each title strictly as a compact noun phrase suitable for open-vocabulary object detectors.
+- Keep titles brief (typically 2 to 6 words).
+- Do not write full sentences, explanatory clauses, or prose (e.g., avoid "The pocket that is located on...").
+- Do not use slashes ("/") or disjunctions ("or") to combine separate components into a single label.
+- Do not include meta-phrases such as "a photo of", "visual attribute of", or "bounding box for".
+
+3. Bbox-Groundable
+The target must correspond to a concrete visual region that can be framed by a single 2D bounding box.
+- The bounding box must cleanly frame the component or cluster envelope without spanning across unrelated intervening parts or large empty gaps.
+- Avoid abstract or non-localized properties (e.g., general lighting, atmosphere, holistic style).
+- Ensure the region has clear visual boundaries in the reference image.
+
+4. Component-Level Cohesion
+Target complete structural parts, functional assemblies, or contiguous arrays as unified entities.
+- Treat multi-action controls, composite assemblies, and immediate contiguous rows/grids of repeated elements as single targets rather than fragmenting them into individual sub-parts.
+- Separate into distinct targets only when elements are physically detached, positioned in different areas of the subject, or structurally independent.
+- Avoid overlapping or redundant labels that target the exact same visual feature.
+
+5. Observable
+Describe only visual elements directly visible in the reference image.
+- Do not infer unseen parts, hidden mechanisms, or external brand lore.
+
+</requirements>
+
+
+<generation_guidelines>
+
+- Formulate every title following standard referring expression / detection prompt syntax: `[optional position/color/material modifier] + [specific component or feature name]`.
+  - Good examples: "black rubberized outsole tread", "gold engraved buckle", "ribbed collar trim", "front dual camera lens".
+  - Poor examples: "shoes" (too generic), "the buckle made of metal that secures the front strap" (too wordy/sentence-like), "high quality craftsmanship" (not bbox-groundable).
+- Strive for maximum discriminative clarity with minimum words: every word in the title should help the detector locate the correct box.
+- Focus on salient components, structural assemblies, and distinctive identity cues; avoid over-fragmenting cohesive components into trivial sub-elements.
+- Exclude non-intrinsic scene elements (background, shadow, lighting reflections, display stand).
+
+</generation_guidelines>
+
+
+<output_format>
+
+Return your response as a valid JSON array. Each element must follow the structure:
+
+```json
+[
+  {
+    "title": "<concise, discriminative bounding box detection label>"
+  }
+]
+```
+
+</output_format>
+

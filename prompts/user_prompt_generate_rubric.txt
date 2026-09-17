@@ -1,0 +1,134 @@
+You are an expert in compositional subject understanding for commercial product images.
+Your task is to analyze a reference product image and construct a comprehensive set of evaluation rubrics that explicitly represent the product's identity.
+
+## Input
+- Reference Image
+
+## Objective
+Construct a comprehensive set of evaluation rubrics that together define the identity of the reference product.
+The generated rubrics serve as the ground-truth specification of the product identity for subsequent subject preservation evaluation.
+Reason through the following process internally.
+Do not output your reasoning.
+
+--------------------------------------------------
+Step 1. Compositional Subject Understanding
+--------------------------------------------------
+
+Understand the identity of the reference product as a composition of multiple identity attributes.
+Do not treat the subject as a flat collection of independent visual attributes.
+Instead, explicitly reason about how different visual attributes jointly define the identity of this specific product.
+
+First, organize the product identity into a small number of coherent identity aspects.
+Each identity aspect should group together identity attributes that serve a common semantic role in defining the product.
+The identity aspects should emerge naturally from the reference image rather than from a predefined taxonomy.
+
+Examples of possible identity aspects include, but are not limited to
+
+- Brand Identity
+- Product Identity
+- Variant Identity
+- Functional Identity
+- Trust Identity
+- Structural Identity
+- Appearance Identity
+
+Do not force every aspect to appear.
+An identity aspect is an internal reasoning scaffold rather than an evaluation target itself.
+Evaluation rubrics should always be generated for fine-grained identity attributes rather than identity aspects.
+
+
+Then, identify the fine-grained identity attributes belonging to each identity aspect.
+Only include visually observable identity attributes.
+Prefer concrete, instance-specific identity attributes over generic semantic descriptions.
+Pay particular attention to visually subtle but identity-defining attributes that distinguish this specific product from visually similar products.
+
+Examples include, but are not limited to
+
+- brand logo
+- product name
+- product line
+- product variant
+- typography
+- package graphics
+- label composition
+- certification marks
+- trust marks
+- functional claims
+- marketing claims
+- printed numbers
+- icons
+- illustrations
+- bottle shape
+- cap design
+- nozzle
+- dispenser
+- structural components
+- distinctive colors
+- decorative elements
+- characteristic textures
+- unique visual markings
+
+The inferred identity aspects are only an internal reasoning scaffold.
+Do not output the inferred identity aspects.
+Instead, use them to ensure that the generated rubrics comprehensively cover the product identity without unnecessary redundancy.
+
+--------------------------------------------------
+Step 2. Construct Evaluation Rubrics
+--------------------------------------------------
+
+The purpose of the inferred identity aspects is to ensure that every important aspect of the product identity is represented by one or more fine-grained evaluation rubrics.
+
+Generate one evaluation rubric for each independently verifiable identity attribute.
+Each rubric should evaluate exactly one identity attribute.
+Each rubric must be self-contained.
+
+Write every description as an evaluation criterion rather than an attribute summary.
+A reader should be able to evaluate the preservation of the identity attribute using only the rubric description, without referring to any other rubric.
+Describe concrete, visually verifiable characteristics.
+
+When appropriate, specify details such as
+
+- text
+- typography
+- logo
+- icon
+- graphics
+- color
+- geometry
+- structure
+- material
+- texture
+- surface appearance
+- relative placement
+
+Avoid vague expressions such as
+
+- maintains identity
+- looks similar
+- appears consistent
+
+Instead, describe the precise visual characteristic that should later be verified.
+
+--------------------------------------------------
+Output Format
+--------------------------------------------------
+
+Return a JSON array.
+Each object must contain exactly the following fields.
+
+{
+    "title": "...",
+    "description": "..."
+}
+
+Rules
+
+- Generate between 8 and 20 rubric items depending on the complexity of the product.
+- Generate exactly one rubric for each independently verifiable identity attribute.
+- Each rubric must evaluate exactly one identity attribute.
+- Each description must be self-contained and independently verifiable.
+- The description should read as an evaluation criterion rather than an attribute summary.
+- Prefer fine-grained visual characteristics over generic semantic descriptions.
+- Ensure that the complete set of rubrics comprehensively covers the product identity without unnecessary redundancy.
+- Do not output the inferred identity aspects.
+- Do not output your reasoning.

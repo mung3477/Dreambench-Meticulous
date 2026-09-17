@@ -1,0 +1,109 @@
+<task>
+
+Given a reference image of a subject, generate a balanced, multi-scale set of visual target labels to be localized and compared for reference-detail preservation.
+
+Each target label identifies a distinct, physically localizable visual region that can be grounded via a bounding box and compared between the reference image and a generated image.
+
+The set must span multiple levels of granularity, covering both:
+1. Coarser Functional & Semantic Regions: High-level functional modules, structural zones, or grouped attribute assemblies that perform a shared role (e.g., "upper control panel section", "front lacing and tongue assembly", "rear camera housing island").
+2. Salient Components & Features: Distinct individual parts, structural elements, or prominent identity markings within or across those regions (e.g., "directional navigation pad", "translucent rubber midsole", "embossed gold brand logo").
+
+</task>
+
+
+<system_context>
+
+The generated titles will be consumed directly as text queries for bounding box (bbox) detection by an open-vocabulary grounding model (e.g., Grounding DINO, OWLv2) and visual evaluator.
+
+For each target title, the system will:
+1. Use the title as a detection prompt to predict a bounding box in the reference image.
+2. Use the title to predict a bounding box for the corresponding region in the generated image.
+3. Compare the visual content within the bounded regions to evaluate fidelity across both macro-structure and localized attributes.
+
+Therefore, each title must function as a standalone, discriminative detection prompt: it must be concise and label-like, yet carry enough descriptive detail to distinguish the intended region or component from other candidates.
+
+</system_context>
+
+
+<reasoning_process>
+
+Before generating target titles, internally perform a top-down visual and functional analysis of the reference subject.
+
+1. High-Level Decomposition (Functional & Semantic Regions):
+   - Identify the major physical zones, structural sections, and functional modules of the subject.
+   - Formulate coarse-grained target labels that encompass these semantic assemblies.
+
+2. Mid-to-Fine Decomposition (Salient Components & Details):
+   - Within each major zone, identify prominent individual components, mechanical interfaces, and distinctive visual markings (logos, emblems, hardware).
+   - Formulate fine-grained target labels for components whose individual preservation is critical to identity.
+
+3. Balance & Coverage:
+   - Ensure the final set includes both coarse functional areas (capturing overall layout and relationships) and specific key components (capturing fine details).
+   - Prune redundant or trivial micro-elements that do not contribute meaningfully to visual evaluation.
+
+Do not output the inspection process. Output only the final JSON array.
+
+</reasoning_process>
+
+
+<requirements>
+
+Each target title must satisfy the following requirements:
+
+1. Discriminative & Specific
+Provide sufficient visual specificity to distinguish the target region or component from all other candidates in the image.
+- Include discriminating modifiers such as location, color, material, or functional role (e.g., use "upper front control cluster" or "lower rubberized outsole" rather than ambiguous general terms).
+- For components with attached text or icons, incorporate the marking as a descriptive modifier of the component rather than creating an isolated box for the text.
+
+2. Concise Noun Phrase (Detection Label Format)
+Format each title strictly as a compact noun phrase suitable for open-vocabulary object detectors.
+- Keep titles brief (typically 2 to 6 words).
+- Do not write full sentences, explanatory clauses, or prose descriptions.
+- Do not use slashes ("/") or disjunctions ("or") to combine disparate alternatives into one label.
+- Do not include meta-phrases such as "a photo of", "visual attribute of", or "bounding box for".
+
+3. Bbox-Groundable Across Scales
+Every target—whether a coarse functional zone or an individual component—must correspond to a coherent visual area encloseable by a single 2D bounding box.
+- For coarse regions, the bounding box frames the entire functional module or structural section as a cohesive whole.
+- For individual components, the bounding box frames the specific component.
+- In all cases, the box must cleanly frame the target without spanning across unrelated distant areas or large empty gaps.
+
+4. Multi-Scale Representation & Cohesion
+The set should maintain clear distinction between macro-regions and micro-components:
+- Treat multi-action controls, contiguous rows/grids of repeated elements, or shared functional strips as single cohesive targets.
+- Include both broad functional assemblies and key constituent components, but avoid extreme over-fragmentation into trivial sub-features.
+- Avoid duplicate titles that target the identical bounding area under different names.
+
+5. Observable
+Describe only visual elements directly visible in the reference image.
+- Do not infer unseen internal parts, invisible electronics, or unobservable brand lore.
+
+</requirements>
+
+
+<generation_guidelines>
+
+- Formulate every title following standard detection prompt syntax: `[optional position/material/functional modifier] + [region or component name]`.
+  - Regional / functional examples: "upper media playback control strip", "front lacing system", "rear dual camera housing island", "padded ankle collar assembly".
+  - Component-level examples: "directional navigation pad", "gold engraved buckle", "black rubberized outsole tread", "embossed circular logo".
+  - Poor examples: "buttons" (too generic), "the panel that controls the volume and channels" (sentence-like prose), "premium quality finish" (not bbox-groundable).
+- Maintain a balanced distribution across scales: approximately one-third coarse functional/semantic regions and two-thirds salient component-level targets.
+- Exclude non-intrinsic scene elements (background, shadow, lighting reflections, display stand).
+
+</generation_guidelines>
+
+
+<output_format>
+
+Return your response as a valid JSON array. Each element must follow the structure:
+
+```json
+[
+  {
+    "title": "<concise, discriminative bounding box detection label>"
+  }
+]
+```
+
+</output_format>
+

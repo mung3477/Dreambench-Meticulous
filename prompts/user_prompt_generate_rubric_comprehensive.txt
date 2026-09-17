@@ -1,0 +1,133 @@
+<task>
+
+Given a reference image of a subject, generate a balanced and comprehensive set of attribute specifications that identify the visual attributes to be independently grounded and compared for evaluating reference-detail preservation.
+
+An attribute specification identifies exactly one visual attribute that can be independently grounded and compared between the reference image and a generated image.
+
+A visual attribute may correspond to either:
+- an intrinsic visual attribute of a subject component, or
+- a visual relationship among multiple subject components.
+
+</task>
+
+
+<system_context>
+
+The generated attribute specifications will be consumed by a multimodal evaluator that has access to both the reference image and a generated image.
+
+For each attribute specification, the evaluator will:
+1. Identify the visual attribute described by the specification.
+2. Ground the corresponding visual evidence in the reference image.
+3. Ground the corresponding visual evidence in the generated image.
+4. Compare the grounded visual evidence to determine whether the visual attribute has been preserved.
+
+Therefore, each attribute specification should function as a grounding query that identifies what visual attribute should be compared, rather than exhaustively describing the reference image or the expected observation.
+
+</system_context>
+
+
+<reasoning_process>
+
+Before generating attribute specifications, internally perform a systematic visual inspection of the reference subject.
+
+Inspect the subject progressively from coarse to fine by considering multiple visual aspects, including:
+- overall geometry and major subject characteristics,
+- subject components and their intrinsic appearance,
+- structural relationships among components,
+- visual markings such as text, logos, and symbols,
+- distinctive local visual details.
+
+After completing the visual inspection, identify the visual attributes represented in the subject.
+
+Partition the observations into independently comparable visual attributes.
+
+If two visual attributes could be preserved or altered independently, represent them as separate attribute specifications.
+
+Multiple low-level visual characteristics may be grouped only when they are perceptually inseparable and together constitute a single visual identity cue.
+
+Convert each visual attribute into one attribute specification.
+
+Do not output the inspection process. Output only the final attribute specifications.
+
+</reasoning_process>
+
+
+<requirements>
+
+Each attribute specification must satisfy the following requirements.
+
+1. Atomic
+
+Each attribute specification should identify exactly one independently comparable visual attribute.
+
+- If two visual attributes could be preserved or altered independently, represent them as separate attribute specifications.
+- Multiple visual characteristics may be grouped only when they jointly constitute a single visual identity cue.
+- Do not combine unrelated comparison attributes into a single specification.
+
+2. Unambiguous
+
+Identify the visual attribute with a unique semantic interpretation.
+
+- Different evaluators should consistently identify the same visual attribute.
+- Avoid vague or subjective expressions.
+
+3. Observable
+
+Describe only information that is directly visible in the reference image.
+
+- Do not infer functionality, purpose, quality, or intent.
+- Do not rely on external knowledge.
+
+4. Groundable
+
+Provide sufficient information for an evaluator to reliably locate the visual attribute.
+
+- Clearly identify the relevant component(s).
+- For relational attributes, clearly identify all participating components and their relationship.
+- Identify the visual attribute rather than describing its expected visual value, unless the expected value is necessary to uniquely identify the attribute (e.g., brand names, model numbers, printed text, distinctive logos, or unique symbols).
+
+5. Comparable
+
+Define the visual attribute so that its grounded visual evidence can be independently compared between the reference and generated images.
+
+- The specification should enable an evaluator to compare only this visual attribute without relying on other specifications.
+- Avoid descriptions that depend on context or subjective interpretation.
+
+6. Informative Title
+
+The title should succinctly identify the visual attribute.
+
+- The title should uniquely distinguish the visual attribute from other specifications.
+- Prefer concise and specific names.
+- Avoid overly generic titles whenever a more specific title is possible.
+
+</requirements>
+
+
+<generation_guidelines>
+
+- Treat every attribute specification as a grounding query rather than a textual description of the reference image.
+- Specify the visual attribute to be compared rather than exhaustively describing its appearance.
+- Generate a balanced and comprehensive specification set spanning multiple levels of visual abstraction, from overall subject characteristics to fine-grained distinguishing details.
+- Include both intrinsic visual attributes and structural relationships whenever applicable.
+- Ensure the specification set progressively refines the subject's visual identity: include coarse visual attributes that establish overall correspondence while placing greater emphasis on attributes that distinguish visually similar subjects.
+- Use the minimum amount of information necessary to uniquely identify each visual attribute.
+- Generate mutually independent specifications by ensuring that each visual attribute could be preserved or altered independently of the others.
+- Avoid redundant specifications describing the same visual attribute.
+- Exclude incidental scene properties such as illumination, shadows, reflections, background, viewpoint, imaging artifacts, or other non-intrinsic properties of the image.
+
+</generation_guidelines>
+
+
+<output_format>
+
+Return your response as a valid JSON array. Each element must follow the structure:
+
+```json
+{
+  "title": "<short visual attribute name>",
+  "description": "<visual attribute to be compared>"
+}
+```
+
+</output_format>
