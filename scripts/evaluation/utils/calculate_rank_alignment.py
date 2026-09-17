@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument(
         "--rating_dir",
         type=str,
-        default="/root/Desktop/workspace/woosung/commercial-dreambench/rating/amzn_distorted_criteria/flux-klein",
+        default="/root/Desktop/workspace/woosung/commercial-dreambench/rating/amzn_distorted/qwen-image-edit",
         help="Path to rating directory containing model subfolders with JSON evaluation results."
     )
     parser.add_argument(
@@ -55,10 +55,10 @@ metric_files = {
     "DreamBench++": "dreambench_plus_results.json",
     "VIEScore": "viescore_results.json",
     "Qwen-Reranker": "qwen_reranker_results.json",
-    # "CLIP_bbox-crop": "clip_bbox-crop_results.json",
-    # "DINO_bbox-crop": "dino_bbox-crop_results.json",
-    # "Qwen-Reranker_bbox-crop": "qwen_reranker_bbox-crop_results.json",
-    # "Ours_bbox-crop": "ours_bbox-crop_results.json",
+    "CLIP_bbox-crop": "clip_bbox-crop_results.json",
+    "DINO_bbox-crop": "dino_bbox-crop_results.json",
+    "Qwen-Reranker_bbox-crop": "qwen_reranker_bbox-crop_results.json",
+    "Ours_bbox-crop": "ours_bbox-crop_results.json",
     # "Visual-Likert-Scale_Qwen-Reranker_bbox-crop": "visual-likert-scale_qwen_reranker_bbox-crop_results.json",
     # "Visual-Likert-Scale_Ref-Distorted_Qwen-Reranker_bbox-crop": "visual-likert-scale_ref-distorted_qwen_reranker_bbox-crop_results.json",
     # "Visual-Likert-Scale_Crop-Distorted_Qwen-Reranker_bbox-crop": "visual-likert-scale_crop-distorted_qwen_reranker_bbox-crop_results.json"
@@ -109,6 +109,19 @@ def load_all_data(rating_dir):
             if os.path.exists(json_path):
                 with open(json_path, "r", encoding="utf-8") as f:
                     dataset[metric_name][model_dir] = json.load(f)
+
+        # 1b. Load model-specific 'ours' results (ours-{judge_model}_bbox-crop_results.json)
+        for fname in os.listdir(full_dir):
+            if fname.startswith("ours-") and fname.endswith("_bbox-crop_results.json"):
+                base_tag = fname[:-len("_results.json")]
+                metric_key = base_tag[0].upper() + base_tag[1:]
+                if metric_key not in dataset:
+                    dataset[metric_key] = {}
+                try:
+                    with open(os.path.join(full_dir, fname), "r", encoding="utf-8") as f:
+                        dataset[metric_key][model_dir] = json.load(f)
+                except Exception as e:
+                    print(f"[Warning] Failed to load {fname} in {full_dir}: {e}")
 
         # 2. Load nested 'ours' structure: rating/{model}/ours/{mode}/{category}/*.json
         for sub_name in os.listdir(full_dir):
@@ -244,7 +257,7 @@ def evaluate_sequence(dataset, metric_name, sequence, dimension_name="Noise Stre
             if excluded_scales and img in excluded_scales and model_name in excluded_scales[img]:
                 continue
             if model_name in dataset[metric_name] and img in dataset[metric_name][model_name]:
-                scores.append(dataset[metric_name][model_name][img])
+                scores.append(round(dataset[metric_name][model_name][img], 4))
                 # Ground truth rank: higher index in noise_strength_seq means stronger noise -> lower expected score rank
                 ranks.append(len(sequence) - 1 - idx)
                 ladder_steps.append((model_name, idx))
@@ -419,49 +432,49 @@ def main():
         else:
             print(f"No discordant pairs found to log to {discordant_csv_path}.")
 
-    # Generate Comparison Plot
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6), dpi=300)
-    dimensions = ["Noise Strength"]
-    x = np.arange(len(metrics))
-    width = 0.15
+    # # Generate Comparison Plot
+    # fig, axes = plt.subplots(1, 2, figsize=(16, 6), dpi=300)
+    # dimensions = ["Noise Strength"]
+    # x = np.arange(len(metrics))
+    # width = 0.15
 
-    for idx, dim in enumerate(dimensions):
-        ax = axes[idx]
-        sub_df = df[df["Dimension"] == dim]
+    # for idx, dim in enumerate(dimensions):
+    #     ax = axes[idx]
+    #     sub_df = df[df["Dimension"] == dim]
 
-        tau_bs = sub_df["Kendall Tau-b (Standard)"].values
-        tau_as = sub_df["Kendall Tau-a (Penalized)"].values
-        std_concs = sub_df["Std Concordance %"].values / 100.0
-        strict_concs = sub_df["Strict Concordance %"].values / 100.0
+    #     # tau_bs = sub_df["Kendall Tau-b (Standard)"].values
+    #     # tau_as = sub_df["Kendall Tau-a (Penalized)"].values
+    #     # std_concs = sub_df["Std Concordance %"].values / 100.0
+    #     # strict_concs = sub_df["Strict Concordance %"].values / 100.0
 
-        rects1 = ax.bar(x - 1.5*width, tau_bs, width, label="Kendall Tau-b (Standard)", color="#1f77b4")
-        rects2 = ax.bar(x - 0.5*width, tau_as, width, label="Kendall Tau-a (Tie-Penalized)", color="#ff7f0e")
-        rects3 = ax.bar(x + 0.5*width, std_concs, width, label="Std Concordance (0-1)", color="#2ca02c")
-        rects4 = ax.bar(x + 1.5*width, strict_concs, width, label="Strict Concordance (0-1)", color="#d62728")
+    #     # rects1 = ax.bar(x - 1.5*width, tau_bs, width, label="Kendall Tau-b (Standard)", color="#1f77b4")
+    #     # rects2 = ax.bar(x - 0.5*width, tau_as, width, label="Kendall Tau-a (Tie-Penalized)", color="#ff7f0e")
+    #     # rects3 = ax.bar(x + 0.5*width, std_concs, width, label="Std Concordance (0-1)", color="#2ca02c")
+    #     # rects4 = ax.bar(x + 1.5*width, strict_concs, width, label="Strict Concordance (0-1)", color="#d62728")
 
-        ax.set_title(f"Tie-Penalization Impact ({dim})", fontsize=14, fontweight="bold", pad=12)
-        ax.set_ylabel("Metric Value", fontsize=11, fontweight="bold")
-        ax.set_xticks(x)
-        ax.set_xticklabels(metrics, fontsize=9, fontweight="bold", rotation=15)
-        ax.set_ylim(-0.1, 1.15)
-        ax.axhline(0, color="gray", linewidth=0.8, linestyle="--")
-        ax.grid(True, linestyle="--", alpha=0.5)
-        ax.legend(fontsize=9, loc="upper left")
+    #     ax.set_title(f"Tie-Penalization Impact ({dim})", fontsize=14, fontweight="bold", pad=12)
+    #     ax.set_ylabel("Metric Value", fontsize=11, fontweight="bold")
+    #     ax.set_xticks(x)
+    #     ax.set_xticklabels(metrics, fontsize=9, fontweight="bold", rotation=15)
+    #     ax.set_ylim(-0.1, 1.15)
+    #     ax.axhline(0, color="gray", linewidth=0.8, linestyle="--")
+    #     ax.grid(True, linestyle="--", alpha=0.5)
+    #     ax.legend(fontsize=9, loc="upper left")
 
-        for rect in rects1 + rects2 + rects3 + rects4:
-            h = rect.get_height()
-            if not np.isnan(h):
-                ax.annotate(f"{h:.2f}",
-                            xy=(rect.get_x() + rect.get_width() / 2, h),
-                            xytext=(0, 3 if h >= 0 else -10),
-                            textcoords="offset points",
-                            ha="center", va="bottom", fontsize=7, fontweight="bold")
+    #     for rect in rects1 + rects2 + rects3 + rects4:
+    #         h = rect.get_height()
+    #         if not np.isnan(h):
+    #             ax.annotate(f"{h:.2f}",
+    #                         xy=(rect.get_x() + rect.get_width() / 2, h),
+    #                         xytext=(0, 3 if h >= 0 else -10),
+    #                         textcoords="offset points",
+    #                         ha="center", va="bottom", fontsize=7, fontweight="bold")
 
-    plt.tight_layout()
-    plot_path = os.path.join(args.output_dir, "tie_penalized_metrics_comparison.png")
-    fig.savefig(plot_path, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved Plot: {plot_path}")
+    # plt.tight_layout()
+    # plot_path = os.path.join(args.output_dir, "tie_penalized_metrics_comparison.png")
+    # fig.savefig(plot_path, bbox_inches="tight")
+    # plt.close(fig)
+    # print(f"Saved Plot: {plot_path}")
 
 if __name__ == "__main__":
     main()

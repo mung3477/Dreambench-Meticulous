@@ -579,9 +579,54 @@ FIVE_LEVEL_SCORES = {
 }
 
 
+def get_vlm_family(model_name: str) -> str:
+    """Identifies the VLM model family based on checkpoint name or path."""
+    name = (model_name or "").lower()
+    if "internvl" in name:
+        return "internvl"
+    elif "glm" in name:
+        return "glm"
+    elif "qwen" in name:
+        return "qwen"
+    else:
+        return "generic"
+
+
+def format_vllm_judge_prompt(model_family: str, prompt_text: str) -> str:
+    """Formats the dual-image comparison prompt for vLLM according to model family conventions."""
+    if model_family == "qwen":
+        return (
+            f"<|im_start|>user\n{prompt_text}\n"
+            f"Reference Image (Image 1):\n<|vision_start|><|image_pad|><|vision_end|>\n"
+            f"Generated Image (Image 2):\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+    elif model_family == "internvl":
+        return (
+            f"<|im_start|>user\n{prompt_text}\n"
+            f"Reference Image (Image 1):\n<image>\n"
+            f"Generated Image (Image 2):\n<image><|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+    elif model_family == "glm":
+        return (
+            f"[gMASK]<sop><|user|>\n{prompt_text}\n"
+            f"Reference Image (Image 1):\n<|begin_of_image|><|end_of_image|>\n"
+            f"Generated Image (Image 2):\n<|begin_of_image|><|end_of_image|><|assistant|>\n"
+        )
+    else:
+        return (
+            f"<|im_start|>user\n{prompt_text}\n"
+            f"Reference Image (Image 1):\n<image>\n"
+            f"Generated Image (Image 2):\n<image><|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+
+
 class OursVLMEvaluator:
     """
     Evaluates crop pairs using 5-level VLM judging (Ours) based on user_prompt_evaluate_with_crops.txt.
+    Supports multiple VLM families (Qwen, InternVL, GLM-4V, generic Vision2Seq).
     Scores: Very Poor=0.0, Poor=1.0, Fair=2.0, Good=3.0, Excellent=4.0 (normalized to 0.0-1.0).
     """
     def __init__(
@@ -614,7 +659,12 @@ class OursVLMEvaluator:
         self.hf_model = None
         self.hf_processor = None
 
-        if detector_engine and getattr(detector_engine, "engine_type", None) is not None:
+        # Only reuse detector engine if the model name matches exactly
+        if (
+            detector_engine
+            and getattr(detector_engine, "engine_type", None) is not None
+            and getattr(detector_engine, "model_name", None) == self.model_name
+        ):
             self.engine_type = detector_engine.engine_type
             self.vllm_engine = detector_engine.vllm_engine
             self.vllm_sampling = detector_engine.vllm_sampling
@@ -627,10 +677,12 @@ class OursVLMEvaluator:
         if self.engine_type is not None:
             return
 
+        model_fam = get_vlm_family(self.model_name)
+
         if self.backend in ["auto", "vllm"]:
             try:
                 from vllm import LLM, SamplingParams
-                print(f"[Init Ours VLM] Initializing vLLM backend for {self.model_name}...")
+                print(f"[Init Ours VLM] Initializing vLLM backend for {self.model_name} (family: {model_fam})...")
                 self.vllm_engine = LLM(
                     model=self.model_name,
                     trust_remote_code=True,
@@ -647,23 +699,102 @@ class OursVLMEvaluator:
             except Exception as e:
                 print(f"[Engine Note] vLLM unavailable ({e}). Falling back to Transformers.")
 
-        print(f"[Init Ours VLM] Initializing Hugging Face Transformers backend for {self.model_name}...")
+        print(f"[Init Ours VLM] Initializing Hugging Face Transformers backend for {self.model_name} (family: {model_fam})...")
+        from transformers import AutoProcessor, AutoTokenizer
         try:
-            from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
-            self.hf_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.bfloat16,
-                device_map="auto"
-            ).eval()
-            self.hf_processor = AutoProcessor.from_pretrained(self.model_name)
+            self.hf_processor = AutoProcessor.from_pretrained(self.model_name, trust_remote_code=True)
         except Exception:
-            from transformers import AutoProcessor, AutoModelForVision2Seq
-            self.hf_model = AutoModelForVision2Seq.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.bfloat16,
-                device_map="auto"
-            ).eval()
-            self.hf_processor = AutoProcessor.from_pretrained(self.model_name)
+            try:
+                self.hf_processor = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+            except Exception as e:
+                print(f"[Warning] Failed to load AutoProcessor/AutoTokenizer for {self.model_name}: {e}")
+                self.hf_processor = None
+
+        if model_fam == "qwen":
+            cls = None
+            try:
+                from transformers import Qwen3VLForConditionalGeneration
+                cls = Qwen3VLForConditionalGeneration
+            except ImportError:
+                try:
+                    from transformers import Qwen2_5_VLForConditionalGeneration
+                    cls = Qwen2_5_VLForConditionalGeneration
+                except ImportError:
+                    cls = None
+
+            if cls is not None:
+                try:
+                    self.hf_model = cls.from_pretrained(
+                        self.model_name,
+                        torch_dtype=torch.bfloat16,
+                        device_map="auto"
+                    ).eval()
+                except Exception:
+                    from transformers import AutoModelForVision2Seq
+                    self.hf_model = AutoModelForVision2Seq.from_pretrained(
+                        self.model_name,
+                        torch_dtype=torch.bfloat16,
+                        device_map="auto"
+                    ).eval()
+            else:
+                from transformers import AutoModelForVision2Seq
+                self.hf_model = AutoModelForVision2Seq.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.bfloat16,
+                    device_map="auto"
+                ).eval()
+        elif model_fam == "internvl":
+            try:
+                from transformers import AutoModel
+                self.hf_model = AutoModel.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.bfloat16,
+                    low_cpu_mem_usage=True,
+                    trust_remote_code=True,
+                    device_map="auto"
+                ).eval()
+            except Exception:
+                from transformers import AutoModelForVision2Seq
+                self.hf_model = AutoModelForVision2Seq.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True,
+                    device_map="auto"
+                ).eval()
+        elif model_fam == "glm":
+            try:
+                from transformers import AutoModelForCausalLM
+                self.hf_model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True,
+                    device_map="auto"
+                ).eval()
+            except Exception:
+                from transformers import AutoModelForVision2Seq
+                self.hf_model = AutoModelForVision2Seq.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True,
+                    device_map="auto"
+                ).eval()
+        else:
+            try:
+                from transformers import AutoModelForVision2Seq
+                self.hf_model = AutoModelForVision2Seq.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True,
+                    device_map="auto"
+                ).eval()
+            except Exception:
+                from transformers import AutoModel
+                self.hf_model = AutoModel.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True,
+                    device_map="auto"
+                ).eval()
 
         self.engine_type = "transformers"
 
@@ -726,15 +857,12 @@ class OursVLMEvaluator:
         scores = []
         details = []
 
+        model_fam = get_vlm_family(self.model_name)
+
         if self.engine_type == "vllm":
             vllm_inputs = []
             for ref_c, sdg_c in zip(ref_crops, sdg_crops):
-                prompt = (
-                    f"<|im_start|>user\n{self.prompt_text}\n"
-                    f"Reference Image (Image 1):\n<|vision_start|><|image_pad|><|vision_end|>\n"
-                    f"Generated Image (Image 2):\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n"
-                    f"<|im_start|>assistant\n"
-                )
+                prompt = format_vllm_judge_prompt(model_fam, self.prompt_text)
                 vllm_inputs.append({
                     "prompt": prompt,
                     "multi_modal_data": {"image": [ref_c, sdg_c]}
@@ -751,24 +879,49 @@ class OursVLMEvaluator:
         else:
             for i, (ref_c, sdg_c) in enumerate(zip(ref_crops, sdg_crops)):
                 lbl = labels[i] if labels and i < len(labels) else ""
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": self.prompt_text},
-                            {"type": "text", "text": "Reference Image (Image 1):"},
-                            {"type": "image", "image": ref_c},
-                            {"type": "text", "text": "Generated Image (Image 2):"},
-                            {"type": "image", "image": sdg_c},
+                raw_resp = ""
+                try:
+                    if hasattr(self.hf_processor, "apply_chat_template"):
+                        messages = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": self.prompt_text},
+                                    {"type": "text", "text": "Reference Image (Image 1):"},
+                                    {"type": "image", "image": ref_c},
+                                    {"type": "text", "text": "Generated Image (Image 2):"},
+                                    {"type": "image", "image": sdg_c},
+                                ]
+                            }
                         ]
-                    }
-                ]
-                text = self.hf_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                inputs = self.hf_processor(text=[text], images=[[ref_c, sdg_c]], return_tensors="pt", padding=True).to(self.hf_model.device)
-                with torch.inference_mode():
-                    generated_ids = self.hf_model.generate(**inputs, max_new_tokens=1024, do_sample=False, temperature=0.0)
-                gen_trimmed = generated_ids[0][len(inputs.input_ids[0]):]
-                raw_resp = self.hf_processor.decode(gen_trimmed, skip_special_tokens=True)
+                        text = self.hf_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                        inputs = self.hf_processor(text=[text], images=[[ref_c, sdg_c]], return_tensors="pt", padding=True).to(self.hf_model.device)
+                        with torch.inference_mode():
+                            generated_ids = self.hf_model.generate(**inputs, max_new_tokens=1024, do_sample=False, temperature=0.0)
+                        gen_trimmed = generated_ids[0][len(inputs.input_ids[0]):]
+                        raw_resp = self.hf_processor.decode(gen_trimmed, skip_special_tokens=True)
+                    elif hasattr(self.hf_model, "chat"):
+                        # Fallback for models providing chat() method (e.g., custom InternVL implementations)
+                        question = (
+                            f"{self.prompt_text}\n"
+                            f"Reference Image (Image 1): <image>\n"
+                            f"Generated Image (Image 2): <image>"
+                        )
+                        total_w = ref_c.width + sdg_c.width
+                        max_h = max(ref_c.height, sdg_c.height)
+                        composite = Image.new("RGB", (total_w, max_h), (255, 255, 255))
+                        composite.paste(ref_c, (0, 0))
+                        composite.paste(sdg_c, (ref_c.width, 0))
+                        raw_resp, _ = self.hf_model.chat(
+                            self.hf_processor,
+                            composite,
+                            question,
+                            generation_config={"max_new_tokens": 1024, "do_sample": False}
+                        )
+                except Exception as e:
+                    print(f"[Warning] Inference error on crop pair with {self.model_name}: {e}")
+                    raw_resp = ""
+
                 score, status, evidence = self.parse_judge_output(raw_resp, default_title=lbl)
                 scores.append(score)
                 details.append({"status": status, "visual_evidence": evidence})
@@ -1084,6 +1237,7 @@ def run_bbox_crop_evaluation(
     rubrics_map: Dict[str, List[Dict[str, str]]],
     detector: VLMDetector,
     metrics: List[str],
+    judge_model: Optional[str] = None,
     reranker_model: str = "Qwen/Qwen3-VL-Reranker-2B",
     judge_prompt: str = "prompts/user_prompt_evaluate_with_crops.txt",
     anchor_cache_dir: str = "outputs/visual_likert_anchors",
@@ -1149,10 +1303,11 @@ def run_bbox_crop_evaluation(
     if "qwen_reranker" in clean_metrics:
         evaluators["qwen_reranker"] = QwenRerankerEvaluator(model_name=reranker_model)
     if "ours" in clean_metrics:
+        chosen_judge_model = judge_model or detector.model_name
         evaluators["ours"] = OursVLMEvaluator(
-            model_name=detector.model_name,
+            model_name=chosen_judge_model,
             prompt_path=judge_prompt,
-            detector_engine=detector
+            detector_engine=detector if chosen_judge_model == detector.model_name else None
         )
     for m_likert in ["visual-likert-scale_qwen_reranker", "visual-likert-scale_ref-distorted_qwen_reranker", "visual-likert-scale_crop-distorted_qwen_reranker"]:
         if m_likert in clean_metrics:
@@ -1437,15 +1592,24 @@ def find_image_pairs(
 # 9. Check Target Completion for --skip_if_done
 # ==============================================================================
 
+def get_metric_output_tag(metric_name: str, judge_model: Optional[str] = None) -> str:
+    """Returns the file/diagnostic tag for a metric, appending the judge model name for 'ours'."""
+    if metric_name == "ours" and judge_model:
+        model_tag = Path(judge_model).name
+        return f"ours-{model_tag}"
+    return metric_name
+
+
 def filter_missing_eval_targets(
     rating_dir: Path,
     eval_pairs: List[Dict[str, Any]],
-    metrics: List[str]
+    metrics: List[str],
+    judge_model: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Splits eval_pairs into (missing_pairs, completed_pairs).
     A pair is considered complete only if it has a valid, non-null, non-NaN score
-    across all specified metrics in rating_dir/{metric}_bbox-crop_results.json.
+    across all specified metrics in rating_dir/{tag}_bbox-crop_results.json.
     """
     if not eval_pairs:
         return [], []
@@ -1454,7 +1618,14 @@ def filter_missing_eval_targets(
 
     existing_ratings: Dict[str, Dict[str, Any]] = {}
     for m in metrics:
-        rating_file = rating_dir / f"{m}_bbox-crop_results.json"
+        tag = get_metric_output_tag(m, judge_model)
+        rating_file = rating_dir / f"{tag}_bbox-crop_results.json"
+        # Only fall back to legacy 'ours_bbox-crop_results.json' if using the original default 32B model
+        if not rating_file.exists() and m == "ours" and judge_model in ["Qwen/Qwen3-VL-32B-Instruct", "Qwen3-VL-32B-Instruct", None]:
+            legacy_file = rating_dir / f"{m}_bbox-crop_results.json"
+            if legacy_file.exists():
+                rating_file = legacy_file
+
         if rating_file.exists():
             try:
                 with open(rating_file, "r", encoding="utf-8") as f:
@@ -1495,9 +1666,10 @@ def filter_missing_eval_targets(
 def check_eval_targets_completed(
     rating_dir: Path,
     eval_pairs: List[Dict[str, Any]],
-    metrics: List[str]
+    metrics: List[str],
+    judge_model: Optional[str] = None
 ) -> bool:
-    missing, _ = filter_missing_eval_targets(rating_dir, eval_pairs, metrics)
+    missing, _ = filter_missing_eval_targets(rating_dir, eval_pairs, metrics, judge_model=judge_model)
     return len(missing) == 0
 
 
@@ -1515,7 +1687,9 @@ def parse_args():
     parser.add_argument("--rating_dir", type=str, default="", help="Rating directory where {metric}_bbox-crop_results.json will be saved")
     parser.add_argument("--cache_file", type=str, default="outputs/bbox_detections_cache.json", help="Persistent bbox cache JSON")
     parser.add_argument("--anchor_cache_dir", type=str, default="outputs/visual_likert_anchors", help="Directory to cache visual Likert distorted reference crops")
-    parser.add_argument("--vlm_model", type=str, default="Qwen/Qwen3-VL-32B-Instruct", help="VLM backbone for bbox detection & judging (default: Qwen/Qwen3-VL-32B-Instruct)")
+    parser.add_argument("--detector_model", type=str, default="Qwen/Qwen3-VL-32B-Instruct", help="VLM backbone for bbox detection (fixed default: Qwen/Qwen3-VL-32B-Instruct)")
+    parser.add_argument("--judge_model", type=str, default=None, help="VLM backbone for Ours VLM judging (e.g. Qwen/Qwen3-VL-32B-Instruct, OpenGVLab/InternVL2_5-38B, THUDM/glm-4v-9b). Defaults to --vlm_model.")
+    parser.add_argument("--vlm_model", type=str, default="Qwen/Qwen3-VL-32B-Instruct", help="Default VLM backbone (default: Qwen/Qwen3-VL-32B-Instruct)")
     parser.add_argument("--reranker_model", type=str, default="Qwen/Qwen3-VL-Reranker-2B", help="Model backbone for Qwen Reranker evaluation (default: Qwen/Qwen3-VL-Reranker-2B)")
     parser.add_argument("--judge_prompt", type=str, default="prompts/user_prompt_evaluate_with_crops.txt", help="Prompt file path for Ours VLM judging")
     parser.add_argument("--backend", type=str, default="auto", choices=["auto", "vllm", "transformers"], help="VLM inference backend")
@@ -1579,9 +1753,12 @@ def main():
         print("[Warning] No matching evaluation pairs found. Exiting.")
         sys.exit(0)
 
+    detector_model = getattr(args, "detector_model", "Qwen/Qwen3-VL-32B-Instruct") or "Qwen/Qwen3-VL-32B-Instruct"
+    judge_model = getattr(args, "judge_model", None) or args.vlm_model or "Qwen/Qwen3-VL-32B-Instruct"
+
     # 2. Identify missing evaluation pairs
     if clean_metrics:
-        missing_pairs, completed_pairs = filter_missing_eval_targets(rating_dir, eval_pairs, clean_metrics)
+        missing_pairs, completed_pairs = filter_missing_eval_targets(rating_dir, eval_pairs, clean_metrics, judge_model=judge_model)
         print(f"[Main] Status: {len(completed_pairs)} already completed, {len(missing_pairs)} missing or incomplete.")
 
         if args.skip_if_done:
@@ -1605,9 +1782,12 @@ def main():
     rubrics_map = load_all_rubrics(args.rubrics_dir)
     print(f"[Main] Loaded {len(rubrics_map)} rubric sets.")
 
-    # 4. Initialize VLM Detector (Default: Qwen/Qwen3-VL-32B-Instruct)
+    detector_model = getattr(args, "detector_model", "Qwen/Qwen3-VL-32B-Instruct") or "Qwen/Qwen3-VL-32B-Instruct"
+    judge_model = getattr(args, "judge_model", None) or args.vlm_model or "Qwen/Qwen3-VL-32B-Instruct"
+
+    # 4. Initialize VLM Detector (Fixed default: Qwen/Qwen3-VL-32B-Instruct)
     detector = VLMDetector(
-        model_name=args.vlm_model,
+        model_name=detector_model,
         cache_file=args.cache_file,
         backend=args.backend,
         gpu_memory_utilization=args.gpu_memory_utilization
@@ -1619,6 +1799,7 @@ def main():
         rubrics_map=rubrics_map,
         detector=detector,
         metrics=clean_metrics,
+        judge_model=judge_model,
         reranker_model=args.reranker_model,
         judge_prompt=args.judge_prompt,
         anchor_cache_dir=args.anchor_cache_dir,
@@ -1633,6 +1814,8 @@ def main():
     # 6. Save Standard Flat Rating Files ({metric}_bbox-crop_results.json) & Merge Diagnostics
     if clean_metrics and not results.get("detection_only", False):
         for m in clean_metrics:
+            m_tag = get_metric_output_tag(m, judge_model)
+
             # Build metric-specific detailed result dictionary for new results
             metric_pair_details = []
             for p in results.get("pair_details", []):
@@ -1645,7 +1828,7 @@ def main():
                     p_copy["rubric_scores"].append(r_copy)
                 metric_pair_details.append(p_copy)
 
-            m_details_file = out_dir / f"evaluation_results_{m}.json"
+            m_details_file = out_dir / f"evaluation_results_{m_tag}.json"
             merged_pair_details = []
             if m_details_file.exists():
                 try:
@@ -1670,26 +1853,26 @@ def main():
             merged_mean_score = (total_merged_score / max(1, total_merged_crops)) if total_merged_crops > 0 else 0.0
 
             metric_results = {
-                "metric": m,
+                "metric": m_tag,
                 "total_pairs": len(merged_pair_details),
                 "total_crop_evaluations": total_merged_crops,
-                "mean_scores": {m: round(float(merged_mean_score), 6)},
+                "mean_scores": {m_tag: round(float(merged_mean_score), 6)},
                 "pair_details": merged_pair_details
             }
 
             with open(m_details_file, "w", encoding="utf-8") as f:
                 json.dump(metric_results, f, indent=2)
-            print(f"[Detailed] Saved {m.upper()} detailed diagnostics ({len(merged_pair_details)} pairs) to: {m_details_file}")
+            print(f"[Detailed] Saved {m_tag.upper()} detailed diagnostics ({len(merged_pair_details)} pairs) to: {m_details_file}")
 
             # Merge flat rating results
-            m_rating_file = rating_dir / f"{m}_bbox-crop_results.json"
+            m_rating_file = rating_dir / f"{m_tag}_bbox-crop_results.json"
             metric_ratings: Dict[str, float] = {}
             if m_rating_file.exists():
                 try:
                     with open(m_rating_file, "r", encoding="utf-8") as f:
                         old_ratings = json.load(f)
-                        if isinstance(old_ratings, dict):
-                            metric_ratings = old_ratings
+                    if isinstance(old_ratings, dict):
+                        metric_ratings = old_ratings
                 except Exception:
                     metric_ratings = {}
 
@@ -1700,7 +1883,7 @@ def main():
 
             with open(m_rating_file, "w", encoding="utf-8") as f:
                 json.dump(metric_ratings, f, indent=4)
-            print(f"[Rating] Saved {m.upper()} rating results ({len(metric_ratings)} total entries) to: {m_rating_file}")
+            print(f"[Rating] Saved {m_tag.upper()} rating results ({len(metric_ratings)} total entries) to: {m_rating_file}")
 
         print("\n=======================================================")
         print("           BBOX-CROP EVALUATION SUMMARY                ")
