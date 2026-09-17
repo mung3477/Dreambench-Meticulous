@@ -9,7 +9,7 @@
 Git 저장소에 트래킹되는 주요 디렉토리 및 파일 구성과 각 기능은 다음과 같습니다.
 
 ### 1. [`assets/`](file:///root/Desktop/workspace/woosung/commercial-dreambench/assets)
-평가에 활용되는 데이터셋 통계 및 관련 리소스가 위치합니다. (대용량 이미지 데이터셋 및 평가 루브릭 JSON 파일은 `.gitignore`에 등록되어 로컬에서 관리됩니다.)
+평가에 활용되는 데이터셋 통계 및 관련 리소스가 위치합니다. (대용량 이미지 데이터셋 및 평가 루브릭 JSON 파일은 아래 [데이터셋 다운로드 및 초기 설정](#-데이터셋-다운로드-및-초기-설정-dataset-setup) 안내에 따라 Hugging Face에서 다운로드하여 관리합니다.)
 *   **[`data/amzn/dataset_stats.html`](file:///root/Desktop/workspace/woosung/commercial-dreambench/assets/data/amzn/dataset_stats.html)**: Amazon 제품 데이터셋 수집 현황 및 메타데이터 통계 시각화 리포트
 
 ### 2. [`prompts/`](file:///root/Desktop/workspace/woosung/commercial-dreambench/prompts)
@@ -88,6 +88,20 @@ VLM(Visual-Language Model) 및 LLM을 호출하여 루브릭 생성, 정합성 �
 *   [`requirements_qwen-rereanker.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_qwen-rereanker.txt): Qwen3-VL-Reranker-2B 기반 이미지 랭킹 평가용 패키지
 *   [`requirements_vllm.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_vllm.txt): vLLM 기반 VLM/LLM 고속 대량 추론 환경용 패키지
 *   [`requirements_clip-dino.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_clip-dino.txt): CLIP 및 DINOv2 백본 임베딩 유사도 측정 패키지
+
+---
+
+## 📥 데이터셋 다운로드 및 초기 설정 (Dataset Setup)
+
+평가 및 실험에 사용되는 대용량 이미지 자산(`assets/`)과 데이터 파일은 Hugging Face Dataset 저장소([`mung3477/Dreambench-Meticulous`](https://huggingface.co/datasets/mung3477/Dreambench-Meticulous))를 통해 관리됩니다. 저장소 루트 디렉토리에서 고성능 전송 옵션(`HF_XET_HIGH_PERFORMANCE=1`)을 설정한 후 다운로드를 실행합니다.
+
+```bash
+# 저장소 루트(Dreambench-Meticulous/) 디렉토리에서 실행
+HF_XET_HIGH_PERFORMANCE=1 hf download mung3477/Dreambench-Meticulous --local-dir . --repo-type=dataset
+```
+
+* **`HF_XET_HIGH_PERFORMANCE=1`**: 대용량 허브 파일 및 Xet 청크 다운로드 시 병렬 처리율 및 전송 성능을 극대화합니다.
+* **`--local-dir .`**: 저장소 루트 디렉토리에 맞추어 `assets/` 및 하위 데이터 파일들이 기존 폴더 구조로 직접 병합(merge)됩니다.
 
 ---
 
