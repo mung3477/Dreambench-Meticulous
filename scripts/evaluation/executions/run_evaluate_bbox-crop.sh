@@ -4,23 +4,47 @@ set -e
 # ==============================================================================
 # Base Configuration & Paths
 # ==============================================================================
-REF_DIR="/root/Desktop/workspace/woosung/commercial-dreambench/assets/data/amzn"
-RUBRICS_DIR="/root/Desktop/workspace/woosung/commercial-dreambench/assets/rubrics/amzn"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 
-SAMPLING_MODEL_DIR="amzn_distorted/flux-klein"
-SAMPLES_BASE_DIR="/root/Desktop/workspace/woosung/commercial-dreambench/samples/${SAMPLING_MODEL_DIR}"
-OUTPUT_BASE_DIR="/root/Desktop/workspace/woosung/commercial-dreambench/outputs/bbox_crop_eval/${SAMPLING_MODEL_DIR}"
-RATING_BASE_DIR="/root/Desktop/workspace/woosung/commercial-dreambench/rating/${SAMPLING_MODEL_DIR}"
+REF_DIR="${REF_DIR:-${PROJECT_ROOT}/assets/data/amzn}"
+RUBRICS_DIR="${RUBRICS_DIR:-${PROJECT_ROOT}/assets/rubrics/amzn}"
+
+SAMPLING_MODEL_DIR="${SAMPLING_MODEL_DIR:-amzn_distorted/flux-klein}"
+SAMPLES_BASE_DIR="${SAMPLES_BASE_DIR:-${PROJECT_ROOT}/samples/${SAMPLING_MODEL_DIR}}"
+OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR:-${PROJECT_ROOT}/outputs/bbox_crop_eval/${SAMPLING_MODEL_DIR}}"
+RATING_BASE_DIR="${RATING_BASE_DIR:-${PROJECT_ROOT}/rating/${SAMPLING_MODEL_DIR}}"
 
 # Shared cache file across all models (reuses Reference image detections)
-SHARED_CACHE_FILE="${OUTPUT_BASE_DIR}/bbox_detections_cache.json"
-# ANCHOR_CACHE_DIR_REF="/root/Desktop/workspace/woosung/commercial-dreambench/outputs/visual_likert_anchors_from_distorted_ref"
-# ANCHOR_CACHE_DIR_CROP="/root/Desktop/workspace/woosung/commercial-dreambench/outputs/visual_likert_anchors"
-# ANCHOR_CACHE_DIR="${ANCHOR_CACHE_DIR_REF}"
+SHARED_CACHE_FILE="${SHARED_CACHE_FILE:-${OUTPUT_BASE_DIR}/bbox_detections_cache.json}"
+ANCHOR_CACHE_DIR_REF="${ANCHOR_CACHE_DIR_REF:-${PROJECT_ROOT}/outputs/visual_likert_anchors_from_distorted_ref}"
+ANCHOR_CACHE_DIR_CROP="${ANCHOR_CACHE_DIR_CROP:-${PROJECT_ROOT}/outputs/visual_likert_anchors}"
+ANCHOR_CACHE_DIR="${ANCHOR_CACHE_DIR:-${ANCHOR_CACHE_DIR_REF}}"
 
-VENV_VLLM="/root/Desktop/workspace/woosung/commercial-dreambench/.venv-vllm"
-VENV_RERANKER="/root/Desktop/workspace/woosung/commercial-dreambench/.venv-qwen-reranker"
-VENV_FLOWFIXER="/root/Desktop/workspace/woosung/commercial-dreambench/.venv-flowfixer"
+# Virtual environments with fallback
+VENV_VLLM="${VENV_VLLM:-${PROJECT_ROOT}/.venv-vllm}"
+VENV_RERANKER="${VENV_RERANKER:-${PROJECT_ROOT}/.venv-qwen-reranker}"
+VENV_FLOWFIXER="${VENV_FLOWFIXER:-${PROJECT_ROOT}/.venv-flowfixer}"
+
+# Resolve Python executables with fallbacks
+VLLM_PY="${VENV_VLLM}/bin/python"
+if [ ! -f "${VLLM_PY}" ]; then
+    VLLM_PY="$(command -v python3)"
+fi
+
+RERANKER_PY="${VENV_RERANKER}/bin/python"
+if [ ! -f "${RERANKER_PY}" ]; then
+    if [ -f "${VENV_VLLM}/bin/python" ]; then
+        RERANKER_PY="${VENV_VLLM}/bin/python"
+    else
+        RERANKER_PY="$(command -v python3)"
+    fi
+fi
+
+FLOWFIXER_PY="${VENV_FLOWFIXER}/bin/python"
+if [ ! -f "${FLOWFIXER_PY}" ]; then
+    FLOWFIXER_PY="$(command -v python3)"
+fi
 
 # Models/Distortions to evaluate
 SAMPLING_MODELS=(noised-0.375x_masked-dino-adaptive_height-ratio-1.0_timestep-10)
@@ -113,7 +137,7 @@ for MODEL in "${SAMPLING_MODELS[@]}"; do
     # Step 1: High-Throughput BBox Detection (vLLM) -> Populates Shared Cache
     # --------------------------------------------------------------------------
     echo ">>> [Step 1/4] Running BBox Detection via vLLM for ${MODEL}..."
-    CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${VENV_VLLM}/bin/python" /root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/evaluate_bbox-crop_efficient.py \
+    CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${VLLM_PY}" "${PROJECT_ROOT}/scripts/evaluation/evaluate_bbox-crop_efficient.py" \
         --ref_dir "${REF_DIR}" \
         --sdg_dir "${SDG_DIR}" \
         --rubrics_dir "${RUBRICS_DIR}" \
@@ -126,38 +150,38 @@ for MODEL in "${SAMPLING_MODELS[@]}"; do
         "${EXTRA_ARGS[@]}"
 
     # --------------------------------------------------------------------------
-    # Step 2: Visual Likert Anchor Precomputation / Extraction
+    # Step 2: Visual Likert Anchor Precomputation / Extraction (Optional)
     # --------------------------------------------------------------------------
-    # if [ "$NEED_ANCHOR_GEN" = true ]; then
-    #     if [[ "$METRICS" =~ visual-likert-scale_crop-distorted ]]; then
-    #         echo ">>> [Step 2/4] Precomputing Visual Likert Reference Anchors via Live SDXL Diffusion (.venv-flowfixer)..."
-    #         CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${VENV_FLOWFIXER}/bin/python" /root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/generate_visual_likert_anchors.py \
-    #             --ref_dir "${REF_DIR}" \
-    #             --rubrics_dir "${RUBRICS_DIR}" \
-    #             --cache_file "${SHARED_CACHE_FILE}" \
-    #             --anchor_cache_dir "${ANCHOR_CACHE_DIR_CROP}" \
-    #             --bbox_margin "${BBOX_MARGIN}" \
-    #             --min_crop_size "${MIN_CROP_SIZE}" \
-    #             "${EXTRA_ARGS[@]}"
-    #     else
-    #         echo ">>> [Step 2/4] Extracting Visual Likert Reference Anchors from Pre-Distorted Full Images..."
-    #         python3 /root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/generate_visual_likert_anchors_from_distorted_ref.py \
-    #             --ref_dir "${REF_DIR}" \
-    #             --rubrics_dir "${RUBRICS_DIR}" \
-    #             --cache_file "${SHARED_CACHE_FILE}" \
-    #             --anchor_cache_dir "${ANCHOR_CACHE_DIR_REF}" \
-    #             --bbox_margin "${BBOX_MARGIN}" \
-    #             --min_crop_size "${MIN_CROP_SIZE}" \
-    #             "${EXTRA_ARGS[@]}"
-    #     fi
-    # fi
+    if [ "$NEED_ANCHOR_GEN" = true ]; then
+        if [[ "$METRICS" =~ visual-likert-scale_crop-distorted ]]; then
+            echo ">>> [Step 2/4] Precomputing Visual Likert Reference Anchors via Live SDXL Diffusion (.venv-flowfixer)..."
+            CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${FLOWFIXER_PY}" "${PROJECT_ROOT}/scripts/evaluation/generate_visual_likert_anchors.py" \
+                --ref_dir "${REF_DIR}" \
+                --rubrics_dir "${RUBRICS_DIR}" \
+                --cache_file "${SHARED_CACHE_FILE}" \
+                --anchor_cache_dir "${ANCHOR_CACHE_DIR_CROP}" \
+                --bbox_margin "${BBOX_MARGIN}" \
+                --min_crop_size "${MIN_CROP_SIZE}" \
+                "${EXTRA_ARGS[@]}"
+        else
+            echo ">>> [Step 2/4] Extracting Visual Likert Reference Anchors from Pre-Distorted Full Images..."
+            CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${FLOWFIXER_PY}" "${PROJECT_ROOT}/scripts/evaluation/generate_visual_likert_anchors_from_distorted_ref.py" \
+                --ref_dir "${REF_DIR}" \
+                --rubrics_dir "${RUBRICS_DIR}" \
+                --cache_file "${SHARED_CACHE_FILE}" \
+                --anchor_cache_dir "${ANCHOR_CACHE_DIR_REF}" \
+                --bbox_margin "${BBOX_MARGIN}" \
+                --min_crop_size "${MIN_CROP_SIZE}" \
+                "${EXTRA_ARGS[@]}"
+        fi
+    fi
 
     # --------------------------------------------------------------------------
     # Step 3: VLM-based Evaluation (Ours, Visual-Likert-VLM via .venv-vllm)
     # --------------------------------------------------------------------------
     if [ ${#VLLM_METRICS[@]} -gt 0 ]; then
         echo ">>> [Step 3/4] Running VLM Metrics (${VLLM_METRICS[*]}) with judge ${JUDGE_MODEL} via vLLM for ${MODEL}..."
-        CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${VENV_VLLM}/bin/python" /root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/evaluate_bbox-crop_efficient.py \
+        CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${VLLM_PY}" "${PROJECT_ROOT}/scripts/evaluation/evaluate_bbox-crop_efficient.py" \
             --ref_dir "${REF_DIR}" \
             --sdg_dir "${SDG_DIR}" \
             --rubrics_dir "${RUBRICS_DIR}" \
@@ -186,7 +210,7 @@ for MODEL in "${SAMPLING_MODELS[@]}"; do
         fi
 
         echo ">>> [Step 4/4] Running Embedding/Reranker Metrics (${EMBED_METRICS[*]}) for ${MODEL}..."
-        CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${VENV_RERANKER}/bin/python" /root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/evaluate_bbox-crop_efficient.py \
+        CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}" "${RERANKER_PY}" "${PROJECT_ROOT}/scripts/evaluation/evaluate_bbox-crop_efficient.py" \
             --ref_dir "${REF_DIR}" \
             --sdg_dir "${SDG_DIR}" \
             --rubrics_dir "${RUBRICS_DIR}" \
