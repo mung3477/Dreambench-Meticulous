@@ -66,14 +66,14 @@ metric_files = {
 
 # Sequences ordered from WEAKEST noise (expected score high) to STRONGEST noise (expected score low)
 noise_strength_seq = [
-    ("original", 0),
-    # ("noised-1.0x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 1),
-    # ("noised-0.875x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 2),
-    # ("noised-0.75x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 3),
-    ("noised-0.625x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 4),
-    # ("noised-0.5x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 5),
-    # ("noised-0.375x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 6),
-    ("noised-0.25x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 7),
+    ("original", 1),
+    # ("noised-1.0x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 2),
+    # ("noised-0.875x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 3),
+    # ("noised-0.75x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 4),
+    # ("noised-0.625x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 5),
+    # ("noised-0.5x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 6),
+    # ("noised-0.375x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 7),
+    ("noised-0.25x_masked-dino-adaptive_height-ratio-1.0_timestep-10", 8),
 ]
 
 noise_area_seq = [
