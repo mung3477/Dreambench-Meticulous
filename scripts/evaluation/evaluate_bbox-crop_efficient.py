@@ -1095,11 +1095,6 @@ class VLMDetector:
 
     def _get_rel_path(self, image_path: str) -> str:
         p_str = str(image_path).replace("\\", "/")
-        p = Path(image_path)
-        try:
-            return p.resolve().relative_to(Path.cwd().resolve()).as_posix()
-        except Exception:
-            pass
 
         markers = [
             "commercial-dreambench/",
@@ -1113,6 +1108,12 @@ class VLMDetector:
                 if marker == "commercial-dreambench/":
                     return p_str.split(marker, 1)[1]
                 return marker + p_str.split(marker, 1)[1]
+
+        p = Path(image_path)
+        try:
+            return p.resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except Exception:
+            pass
 
         return p.name
 
