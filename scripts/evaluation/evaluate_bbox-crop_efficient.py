@@ -443,11 +443,12 @@ class DINOEvaluator:
 
 class QwenRerankerEvaluator:
     """Evaluates crop pairs using Qwen3-VL-Reranker-2B via CrossEncoder."""
-    def __init__(self, model_name: str = "Qwen/Qwen3-VL-Reranker-2B", device: str = "cuda"):
+    def __init__(self, model_name: str = "Qwen/Qwen3-VL-Reranker-2B", device: str = "cuda", reverse_image_order: bool = False):
         from sentence_transformers import CrossEncoder
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.model_name = model_name
-        print(f"[Init] Loading Qwen3-VL-Reranker ({model_name}) on {self.device}...")
+        self.reverse_image_order = reverse_image_order
+        print(f"[Init] Loading Qwen3-VL-Reranker ({model_name}) on {self.device} (reverse_image_order={reverse_image_order})...")
         self.model = CrossEncoder(
             model_name,
             trust_remote_code=True,
@@ -464,6 +465,10 @@ class QwenRerankerEvaluator:
             return []
 
         pairs = list(zip(ref_crops, sdg_crops))
+        if self.reverse_image_order:
+            pairs = list(zip(sdg_crops, ref_crops))
+        else:
+            pairs = list(zip(ref_crops, sdg_crops))
         raw_scores = self.model.predict(pairs, batch_size=len(pairs), show_progress_bar=False)
         return [float(s) for s in raw_scores]
 
@@ -592,33 +597,74 @@ def get_vlm_family(model_name: str) -> str:
         return "generic"
 
 
-def format_vllm_judge_prompt(model_family: str, prompt_text: str) -> str:
+def adapt_prompt_for_reversed_order(prompt_text: str) -> str:
+    """
+    Adapts the evaluation prompt when image presentation order is reversed:
+    Image 1 becomes the Generated Image and Image 2 becomes the Reference Image.
+    Swaps all textual references between Image 1 (Reference) and Image 2 (Generated).
+    """
+    if not prompt_text:
+        return prompt_text
+
+    text = prompt_text
+
+    # Two-stage placeholder replacement to prevent accidental collision
+    pairs = [
+        # Reference phrases (Image 1 -> Reference)
+        (r"(?i)Reference Image \(Image\s*1\)", "__REF_IMG_P__"),
+        (r"(?i)reference image \(Image\s*1\)", "__REF_IMG_P__"),
+        (r"(?i)Image\s*1 \(Reference\)", "__REF_IMG_P__"),
+        (r"(?i)Image\s*1 \(reference\)", "__REF_IMG_P__"),
+        # Generated phrases (Image 2 -> Generated)
+        (r"(?i)Generated Image \(Image\s*2\)", "__GEN_IMG_P__"),
+        (r"(?i)generated image \(Image\s*2\)", "__GEN_IMG_P__"),
+        (r"(?i)Image\s*2 \(Generated\)", "__GEN_IMG_P__"),
+        (r"(?i)Image\s*2 \(generated\)", "__GEN_IMG_P__"),
+    ]
+    for pattern, placeholder in pairs:
+        text = re.sub(pattern, placeholder, text)
+
+    text = text.replace("__REF_IMG_P__", "Reference Image (Image 2)")
+    text = text.replace("__GEN_IMG_P__", "Generated Image (Image 1)")
+    return text
+
+
+def format_vllm_judge_prompt(model_family: str, prompt_text: str, reverse_order: bool = False) -> str:
     """Formats the dual-image comparison prompt for vLLM according to model family conventions."""
+    if reverse_order:
+        effective_prompt = adapt_prompt_for_reversed_order(prompt_text)
+        img1_label = "Generated Image (Image 1):"
+        img2_label = "Reference Image (Image 2):"
+    else:
+        effective_prompt = prompt_text
+        img1_label = "Reference Image (Image 1):"
+        img2_label = "Generated Image (Image 2):"
+
     if model_family == "qwen":
         return (
-            f"<|im_start|>user\n{prompt_text}\n"
-            f"Reference Image (Image 1):\n<|vision_start|><|image_pad|><|vision_end|>\n"
-            f"Generated Image (Image 2):\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n"
+            f"<|im_start|>user\n{effective_prompt}\n"
+            f"{img1_label}\n<|vision_start|><|image_pad|><|vision_end|>\n"
+            f"{img2_label}\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n"
             f"<|im_start|>assistant\n"
         )
     elif model_family == "internvl":
         return (
-            f"<|im_start|>user\n{prompt_text}\n"
-            f"Reference Image (Image 1):\n<image>\n"
-            f"Generated Image (Image 2):\n<image><|im_end|>\n"
+            f"<|im_start|>user\n{effective_prompt}\n"
+            f"{img1_label}\n<image>\n"
+            f"{img2_label}\n<image><|im_end|>\n"
             f"<|im_start|>assistant\n"
         )
     elif model_family == "glm":
         return (
-            f"[gMASK]<sop><|user|>\n{prompt_text}\n"
-            f"Reference Image (Image 1):\n<|begin_of_image|><|end_of_image|>\n"
-            f"Generated Image (Image 2):\n<|begin_of_image|><|end_of_image|><|assistant|>\n"
+            f"[gMASK]<sop><|user|>\n{effective_prompt}\n"
+            f"{img1_label}\n<|begin_of_image|><|end_of_image|>\n"
+            f"{img2_label}\n<|begin_of_image|><|end_of_image|><|assistant|>\n"
         )
     else:
         return (
-            f"<|im_start|>user\n{prompt_text}\n"
-            f"Reference Image (Image 1):\n<image>\n"
-            f"Generated Image (Image 2):\n<image><|im_end|>\n"
+            f"<|im_start|>user\n{effective_prompt}\n"
+            f"{img1_label}\n<image>\n"
+            f"{img2_label}\n<image><|im_end|>\n"
             f"<|im_start|>assistant\n"
         )
 
@@ -635,11 +681,13 @@ class OursVLMEvaluator:
         prompt_path: Optional[Union[str, Path]] = "prompts/user_prompt_evaluate_with_crops.txt",
         backend: str = "auto",
         gpu_memory_utilization: float = 0.88,
-        detector_engine: Optional[Any] = None
+        detector_engine: Optional[Any] = None,
+        reverse_image_order: bool = False
     ):
         self.model_name = model_name
         self.backend = backend
         self.gpu_memory_utilization = gpu_memory_utilization
+        self.reverse_image_order = reverse_image_order
         self.prompt_text = ""
 
         if prompt_path and Path(prompt_path).exists():
@@ -861,11 +909,12 @@ class OursVLMEvaluator:
 
         if self.engine_type == "vllm":
             vllm_inputs = []
+            prompt = format_vllm_judge_prompt(model_fam, self.prompt_text, reverse_order=self.reverse_image_order)
             for ref_c, sdg_c in zip(ref_crops, sdg_crops):
-                prompt = format_vllm_judge_prompt(model_fam, self.prompt_text)
+                images = [sdg_c, ref_c] if self.reverse_image_order else [ref_c, sdg_c]
                 vllm_inputs.append({
                     "prompt": prompt,
-                    "multi_modal_data": {"image": [ref_c, sdg_c]}
+                    "multi_modal_data": {"image": images}
                 })
 
             outputs = self.vllm_engine.generate(vllm_inputs, sampling_params=self.vllm_sampling)
@@ -877,41 +926,69 @@ class OursVLMEvaluator:
                 details.append({"status": status, "visual_evidence": evidence})
 
         else:
+            effective_prompt = adapt_prompt_for_reversed_order(self.prompt_text) if self.reverse_image_order else self.prompt_text
             for i, (ref_c, sdg_c) in enumerate(zip(ref_crops, sdg_crops)):
                 lbl = labels[i] if labels and i < len(labels) else ""
                 raw_resp = ""
                 try:
                     if hasattr(self.hf_processor, "apply_chat_template"):
-                        messages = [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": self.prompt_text},
-                                    {"type": "text", "text": "Reference Image (Image 1):"},
-                                    {"type": "image", "image": ref_c},
-                                    {"type": "text", "text": "Generated Image (Image 2):"},
-                                    {"type": "image", "image": sdg_c},
-                                ]
-                            }
-                        ]
+                        if self.reverse_image_order:
+                            messages = [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": effective_prompt},
+                                        {"type": "text", "text": "Generated Image (Image 1):"},
+                                        {"type": "image", "image": sdg_c},
+                                        {"type": "text", "text": "Reference Image (Image 2):"},
+                                        {"type": "image", "image": ref_c},
+                                    ]
+                                }
+                            ]
+                            images_arg = [[sdg_c, ref_c]]
+                        else:
+                            messages = [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": effective_prompt},
+                                        {"type": "text", "text": "Reference Image (Image 1):"},
+                                        {"type": "image", "image": ref_c},
+                                        {"type": "text", "text": "Generated Image (Image 2):"},
+                                        {"type": "image", "image": sdg_c},
+                                    ]
+                                }
+                            ]
+                            images_arg = [[ref_c, sdg_c]]
+
                         text = self.hf_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                        inputs = self.hf_processor(text=[text], images=[[ref_c, sdg_c]], return_tensors="pt", padding=True).to(self.hf_model.device)
+                        inputs = self.hf_processor(text=[text], images=images_arg, return_tensors="pt", padding=True).to(self.hf_model.device)
                         with torch.inference_mode():
                             generated_ids = self.hf_model.generate(**inputs, max_new_tokens=1024, do_sample=False, temperature=0.0)
                         gen_trimmed = generated_ids[0][len(inputs.input_ids[0]):]
                         raw_resp = self.hf_processor.decode(gen_trimmed, skip_special_tokens=True)
                     elif hasattr(self.hf_model, "chat"):
                         # Fallback for models providing chat() method (e.g., custom InternVL implementations)
-                        question = (
-                            f"{self.prompt_text}\n"
-                            f"Reference Image (Image 1): <image>\n"
-                            f"Generated Image (Image 2): <image>"
-                        )
-                        total_w = ref_c.width + sdg_c.width
-                        max_h = max(ref_c.height, sdg_c.height)
+                        if self.reverse_image_order:
+                            question = (
+                                f"{effective_prompt}\n"
+                                f"Generated Image (Image 1): <image>\n"
+                                f"Reference Image (Image 2): <image>"
+                            )
+                            first_c, second_c = sdg_c, ref_c
+                        else:
+                            question = (
+                                f"{effective_prompt}\n"
+                                f"Reference Image (Image 1): <image>\n"
+                                f"Generated Image (Image 2): <image>"
+                            )
+                            first_c, second_c = ref_c, sdg_c
+
+                        total_w = first_c.width + second_c.width
+                        max_h = max(first_c.height, second_c.height)
                         composite = Image.new("RGB", (total_w, max_h), (255, 255, 255))
-                        composite.paste(ref_c, (0, 0))
-                        composite.paste(sdg_c, (ref_c.width, 0))
+                        composite.paste(first_c, (0, 0))
+                        composite.paste(second_c, (first_c.width, 0))
                         raw_resp, _ = self.hf_model.chat(
                             self.hf_processor,
                             composite,
@@ -1246,7 +1323,8 @@ def run_bbox_crop_evaluation(
     crop_upscale_factor: float = 1.0,
     visualize_dir: Optional[Path] = None,
     batch_size: int = 128,
-    vllm_chunk_size: int = 1024
+    vllm_chunk_size: int = 1024,
+    reverse_image_order: bool = False
 ) -> Dict[str, Any]:
     print(f"\n[Step 1/3] Indexing unique detection tasks across {len(eval_pairs)} image pairs...")
     detection_tasks = []
@@ -1257,8 +1335,6 @@ def run_bbox_crop_evaluation(
         sdg_path = pair["sdg_image"]
         asin_name = pair.get("asin", "")
         cat_name = pair.get("category", "")
-        cat_name = pair.get("category", "")
-        asin_name = pair.get("asin", "")
         rubric_key = pair.get("rubric_key", asin_name)
         rubrics = (
             rubrics_map.get(f"{cat_name}/{asin_name}")
@@ -1301,13 +1377,17 @@ def run_bbox_crop_evaluation(
     if "dino" in clean_metrics:
         evaluators["dino"] = DINOEvaluator()
     if "qwen_reranker" in clean_metrics:
-        evaluators["qwen_reranker"] = QwenRerankerEvaluator(model_name=reranker_model)
+        evaluators["qwen_reranker"] = QwenRerankerEvaluator(
+            model_name=reranker_model,
+            reverse_image_order=reverse_image_order
+        )
     if "ours" in clean_metrics:
         chosen_judge_model = judge_model or detector.model_name
         evaluators["ours"] = OursVLMEvaluator(
             model_name=chosen_judge_model,
             prompt_path=judge_prompt,
-            detector_engine=detector if chosen_judge_model == detector.model_name else None
+            detector_engine=detector if chosen_judge_model == detector.model_name else None,
+            reverse_image_order=reverse_image_order
         )
     for m_likert in ["visual-likert-scale_qwen_reranker", "visual-likert-scale_ref-distorted_qwen_reranker", "visual-likert-scale_crop-distorted_qwen_reranker"]:
         if m_likert in clean_metrics:
@@ -1592,19 +1672,24 @@ def find_image_pairs(
 # 9. Check Target Completion for --skip_if_done
 # ==============================================================================
 
-def get_metric_output_tag(metric_name: str, judge_model: Optional[str] = None) -> str:
-    """Returns the file/diagnostic tag for a metric, appending the judge model name for 'ours'."""
+def get_metric_output_tag(metric_name: str, judge_model: Optional[str] = None, reverse_image_order: bool = False) -> str:
+    """Returns the file/diagnostic tag for a metric, appending the judge model name for 'ours', and '_image-reversed' if reversed."""
     if metric_name == "ours" and judge_model:
         model_tag = Path(judge_model).name
-        return f"ours-{model_tag}"
-    return metric_name
+        tag = f"ours-{model_tag}"
+    else:
+        tag = metric_name
+    if reverse_image_order:
+        tag = f"{tag}_image-reversed"
+    return tag
 
 
 def filter_missing_eval_targets(
     rating_dir: Path,
     eval_pairs: List[Dict[str, Any]],
     metrics: List[str],
-    judge_model: Optional[str] = None
+    judge_model: Optional[str] = None,
+    reverse_image_order: bool = False
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Splits eval_pairs into (missing_pairs, completed_pairs).
@@ -1618,10 +1703,10 @@ def filter_missing_eval_targets(
 
     existing_ratings: Dict[str, Dict[str, Any]] = {}
     for m in metrics:
-        tag = get_metric_output_tag(m, judge_model)
+        tag = get_metric_output_tag(m, judge_model, reverse_image_order=reverse_image_order)
         rating_file = rating_dir / f"{tag}_bbox-crop_results.json"
-        # Only fall back to legacy 'ours_bbox-crop_results.json' if using the original default 32B model
-        if not rating_file.exists() and m == "ours" and judge_model in ["Qwen/Qwen3-VL-32B-Instruct", "Qwen3-VL-32B-Instruct", None]:
+        # Only fall back to legacy 'ours_bbox-crop_results.json' if not reversed and using original default 32B model
+        if not reverse_image_order and not rating_file.exists() and m == "ours" and judge_model in ["Qwen/Qwen3-VL-32B-Instruct", "Qwen3-VL-32B-Instruct", None]:
             legacy_file = rating_dir / f"{m}_bbox-crop_results.json"
             if legacy_file.exists():
                 rating_file = legacy_file
@@ -1667,9 +1752,10 @@ def check_eval_targets_completed(
     rating_dir: Path,
     eval_pairs: List[Dict[str, Any]],
     metrics: List[str],
-    judge_model: Optional[str] = None
+    judge_model: Optional[str] = None,
+    reverse_image_order: bool = False
 ) -> bool:
-    missing, _ = filter_missing_eval_targets(rating_dir, eval_pairs, metrics, judge_model=judge_model)
+    missing, _ = filter_missing_eval_targets(rating_dir, eval_pairs, metrics, judge_model=judge_model, reverse_image_order=reverse_image_order)
     return len(missing) == 0
 
 
@@ -1710,6 +1796,7 @@ def parse_args():
     parser.add_argument("--save_visualizations", action="store_true", help="Save annotated images with bbox overlays")
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size for metric inference")
     parser.add_argument("--vllm_chunk_size", type=int, default=1024, help="Chunk size for vLLM detection batches to cap RAM usage")
+    parser.add_argument("--reverse_image_order", action="store_true", help="Reverse image presentation order (Generated Image first, Reference Image second) to evaluate MLLM positional bias")
     return parser.parse_args()
 
 
@@ -1759,6 +1846,9 @@ def main():
     # 2. Identify missing evaluation pairs
     if clean_metrics:
         missing_pairs, completed_pairs = filter_missing_eval_targets(rating_dir, eval_pairs, clean_metrics, judge_model=judge_model)
+        missing_pairs, completed_pairs = filter_missing_eval_targets(
+            rating_dir, eval_pairs, clean_metrics, judge_model=judge_model, reverse_image_order=args.reverse_image_order
+        )
         print(f"[Main] Status: {len(completed_pairs)} already completed, {len(missing_pairs)} missing or incomplete.")
 
         if args.skip_if_done:
@@ -1808,13 +1898,14 @@ def main():
         crop_upscale_factor=args.crop_upscale,
         visualize_dir=vis_dir,
         batch_size=args.batch_size,
-        vllm_chunk_size=args.vllm_chunk_size
+        vllm_chunk_size=args.vllm_chunk_size,
+        reverse_image_order=args.reverse_image_order
     )
 
     # 6. Save Standard Flat Rating Files ({metric}_bbox-crop_results.json) & Merge Diagnostics
     if clean_metrics and not results.get("detection_only", False):
         for m in clean_metrics:
-            m_tag = get_metric_output_tag(m, judge_model)
+            m_tag = get_metric_output_tag(m, judge_model, reverse_image_order=args.reverse_image_order)
 
             # Build metric-specific detailed result dictionary for new results
             metric_pair_details = []
