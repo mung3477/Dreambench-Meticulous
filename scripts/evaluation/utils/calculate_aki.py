@@ -35,6 +35,9 @@ import itertools
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 
 def parse_args():
@@ -80,12 +83,30 @@ def parse_args():
         "--output_dir",
         type=str,
         default=None,
-        help="Directory to save summary CSV and logs (defaults to rating_dir/aki_summary)."
+        help="Directory to save summary CSV, logs, and plots (defaults to {root_dir}/outputs/{dataset}/{sampling-model}/aki-summary based on rating_dir)."
     )
     parser.add_argument(
         "--save_pairwise_json",
         action="store_true",
         help="Save detailed per-sample AKI JSON under rating_dir/<target_model>/aki_vs_<baseline_model>.json."
+    )
+    parser.add_argument(
+        "--plot_scatter",
+        action="store_true",
+        help="Generate academic scatter plots of matched keypoints (Target vs Baseline) per sample."
+    )
+    parser.add_argument(
+        "--plot_max_val",
+        type=float,
+        default=None,
+        help="Upper limit for scatter plot axes (e.g. 600). If omitted, inferred automatically from data."
+    )
+    parser.add_argument(
+        "--plot_format",
+        type=str,
+        default="png",
+        choices=["png", "pdf", "svg"],
+        help="File format for exported plots (default: png)."
     )
     return parser.parse_args()
 
@@ -163,6 +184,181 @@ def calculate_pair_metrics(target_scores, baseline_scores, tau=0.0):
     }
 
 
+def compute_axis_limit(max_data):
+    """Computes a clean round upper limit and tick interval for scatter plot axes."""
+    if max_data <= 50:
+        limit = int(np.ceil(max_data / 10.0)) * 10
+        step = 10
+    elif max_data <= 100:
+        limit = int(np.ceil(max_data / 20.0)) * 20
+        step = 20
+    elif max_data <= 300:
+        limit = int(np.ceil(max_data / 50.0)) * 50
+        step = 50
+    elif max_data <= 600:
+        limit = int(np.ceil(max_data / 100.0)) * 100
+        step = 200 if limit >= 400 else 100
+    else:
+        limit = int(np.ceil(max_data / 200.0)) * 200
+        step = 200
+    return max(limit, 10), max(step, 5)
+
+
+import textwrap
+
+
+def render_scatter_subplot(ax, baseline_kps, target_kps, target_name, baseline_name, max_val=None, tick_step=None):
+    """
+    Renders a single scatter plot subplot matching the paper Figure 6 style:
+      - X-axis: Baseline matched keypoints
+      - Y-axis: Target model matched keypoints
+      - Red dashed diagonal line (y = x)
+      - Green shaded region above the diagonal (y >= x, positive AKI)
+      - Minimalist academic aesthetics with clean spines
+    """
+    if max_val is None:
+        raw_max = max(max(baseline_kps, default=0), max(target_kps, default=0))
+        max_val, tick_step = compute_axis_limit(raw_max)
+    elif tick_step is None:
+        tick_step = max_val / 3.0 if max_val >= 300 else max_val / 2.0
+
+    # Shaded pale green region above the diagonal y >= x (positive AKI)
+    ax.fill_between(
+        [0, max_val],
+        [0, max_val],
+        [max_val, max_val],
+        color='#ddedd4',
+        alpha=0.9,
+        zorder=1
+    )
+
+    # Red dashed diagonal line y = x
+    ax.plot(
+        [0, max_val],
+        [0, max_val],
+        color='#c00000',
+        linestyle='--',
+        linewidth=2.2,
+        zorder=2
+    )
+
+    # Scatter points per sample
+    ax.scatter(
+        baseline_kps,
+        target_kps,
+        s=14,
+        color='#3c5a6b',
+        alpha=0.75,
+        edgecolors='none',
+        zorder=3
+    )
+
+    # Axis limits & square aspect ratio
+    ax.set_xlim(0, max_val)
+    ax.set_ylim(0, max_val)
+    ax.set_aspect('equal', adjustable='box')
+
+    # Ticks configuration
+    ticks = np.arange(0, max_val + tick_step * 0.5, tick_step)
+    tick_labels = [f"{int(t)}" if float(t).is_integer() else f"{t:.1f}" for t in ticks]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(tick_labels)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(tick_labels)
+    ax.tick_params(direction='out', length=4, width=1.0, colors='#222222', labelsize=11)
+
+    # Clean spines: remove top and right borders
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#666666')
+    ax.spines['bottom'].set_color('#666666')
+    ax.spines['left'].set_linewidth(1.0)
+    ax.spines['bottom'].set_linewidth(1.0)
+
+    # Wrap very long model names for clean display
+    wrapped_target = textwrap.fill(target_name, width=26) if len(target_name) > 24 else target_name
+    wrapped_baseline = textwrap.fill(baseline_name if baseline_name else "Baseline", width=26)
+
+    # Labels
+    ax.set_xlabel(wrapped_baseline, fontsize=13, labelpad=8)
+    ax.set_ylabel(wrapped_target, fontsize=12, labelpad=8)
+
+
+def plot_pairwise_scatter(baseline_name, target_name, baseline_kps, target_kps, save_path, max_val=None):
+    """Generates and saves an individual pairwise scatter plot."""
+    fig, ax = plt.subplots(figsize=(5.5, 5.5), dpi=300)
+    render_scatter_subplot(
+        ax,
+        baseline_kps=baseline_kps,
+        target_kps=target_kps,
+        target_name=target_name,
+        baseline_name=baseline_name,
+        max_val=max_val
+    )
+    plt.tight_layout(pad=1.5)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
+def plot_grid_scatter(baseline_name, pairs_data, save_path, max_val=None):
+    """
+    Generates a multi-panel grid of scatter plots (e.g. 2x2 like Figure 6).
+    pairs_data: list of tuples (target_name, baseline_kps, target_kps)
+    """
+    n_plots = len(pairs_data)
+    if n_plots == 0:
+        return
+
+    # Determine global max_val across all pairs for fair visual comparison
+    if max_val is None:
+        global_max = 0
+        for _, b_kps, t_kps in pairs_data:
+            if b_kps and t_kps:
+                global_max = max(global_max, max(b_kps), max(t_kps))
+        max_val, tick_step = compute_axis_limit(global_max)
+    else:
+        tick_step = max_val / 3.0 if max_val >= 300 else max_val / 2.0
+
+    # Layout geometry
+    if n_plots == 1:
+        nrows, ncols = 1, 1
+    elif n_plots == 2:
+        nrows, ncols = 1, 2
+    elif n_plots <= 4:
+        nrows, ncols = 2, 2
+    elif n_plots <= 6:
+        nrows, ncols = 2, 3
+    elif n_plots <= 8:
+        nrows, ncols = 2, 4
+    else:
+        ncols = 3
+        nrows = int(np.ceil(n_plots / ncols))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.5 * ncols, 5.5 * nrows), dpi=300)
+    flat_axes = [axes] if n_plots == 1 else axes.flatten()
+
+    for idx, (target_name, b_kps, t_kps) in enumerate(pairs_data):
+        render_scatter_subplot(
+            flat_axes[idx],
+            baseline_kps=b_kps,
+            target_kps=t_kps,
+            target_name=target_name,
+            baseline_name=baseline_name,
+            max_val=max_val,
+            tick_step=tick_step
+        )
+
+    # Hide unused subplots
+    for idx in range(n_plots, len(flat_axes)):
+        flat_axes[idx].set_visible(False)
+
+    plt.tight_layout(pad=2.0, w_pad=3.0, h_pad=2.5)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
 def log_summary_entry(output_dir, target_name, baseline_name, num_samples, mean_aki, k_gain, tau):
     kst = timezone(timedelta(hours=9))
     now_kst = datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S KST')
@@ -178,10 +374,27 @@ def log_summary_entry(output_dir, target_name, baseline_name, num_samples, mean_
         f.write(line)
 
 
+def resolve_default_output_dir(rating_dir):
+    """
+    Resolves default output directory to:
+        {root_dir}/outputs/{dataset}/{sampling-model}/aki-summary
+    based on the rating directory path (e.g. {root_dir}/rating/{dataset}/{sampling-model}).
+    Falls back to {rating_dir}/aki-summary if 'rating' is not in the path.
+    """
+    abs_rating_dir = os.path.abspath(rating_dir)
+    parts = abs_rating_dir.split(os.sep)
+    if "rating" in parts:
+        idx = len(parts) - 1 - parts[::-1].index("rating")
+        root_dir = os.sep.join(parts[:idx])
+        subpath = parts[idx + 1:]
+        return os.path.join(root_dir, "outputs", *subpath, "aki-summary")
+    return os.path.join(abs_rating_dir, "aki-summary")
+
+
 def main():
     args = parse_args()
     rating_dir = os.path.abspath(args.rating_dir)
-    output_dir = os.path.abspath(args.output_dir) if args.output_dir else os.path.join(rating_dir, 'aki_summary')
+    output_dir = os.path.abspath(args.output_dir) if args.output_dir else resolve_default_output_dir(rating_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     if not os.path.isdir(rating_dir):
@@ -192,7 +405,7 @@ def main():
     available_models = {}
     for d in sorted(os.listdir(rating_dir)):
         m_dir = os.path.join(rating_dir, d)
-        if not os.path.isdir(m_dir) or d in ['aki_summary', 'log']:
+        if not os.path.isdir(m_dir) or d in ['aki_summary', 'aki-summary', 'log', 'scatter_plots']:
             continue
         scores = load_model_keypoints(m_dir, filename=args.keypoint_file)
         if scores:
@@ -236,6 +449,10 @@ def main():
     print(f"{'-'*75}")
 
     summary_rows = []
+    grid_pairs = {}
+    plot_dir = os.path.join(output_dir, "scatter_plots")
+    if args.plot_scatter:
+        os.makedirs(plot_dir, exist_ok=True)
 
     for target_m, baseline_m in pairs_to_evaluate:
         res = calculate_pair_metrics(
@@ -273,6 +490,23 @@ def main():
             "tau": args.tau
         })
 
+        if args.plot_scatter:
+            b_kps = [v["baseline_keypoints"] for v in res["details"].values()]
+            t_kps = [v["target_keypoints"] for v in res["details"].values()]
+            plot_filename = f"{target_m}_vs_{baseline_m}.{args.plot_format}"
+            plot_path = os.path.join(plot_dir, plot_filename)
+            plot_pairwise_scatter(
+                baseline_name=baseline_m,
+                target_name=target_m,
+                baseline_kps=b_kps,
+                target_kps=t_kps,
+                save_path=plot_path,
+                max_val=args.plot_max_val
+            )
+            if baseline_m not in grid_pairs:
+                grid_pairs[baseline_m] = []
+            grid_pairs[baseline_m].append((target_m, b_kps, t_kps))
+
         if args.save_pairwise_json:
             target_dir = os.path.join(rating_dir, target_m)
             pair_json_path = os.path.join(target_dir, f"aki_vs_{baseline_m}.json")
@@ -291,6 +525,21 @@ def main():
                 print(f"Warning: Failed to save pairwise JSON {pair_json_path}: {e}")
 
     print(f"{'-'*75}")
+
+    # Generate combined grid scatter plots if multiple targets were evaluated against baseline
+    if args.plot_scatter and grid_pairs:
+        for b_name, targets in grid_pairs.items():
+            if len(targets) > 1:
+                grid_filename = f"grid_all_vs_{b_name}.{args.plot_format}"
+                grid_path = os.path.join(plot_dir, grid_filename)
+                plot_grid_scatter(
+                    baseline_name=b_name,
+                    pairs_data=targets,
+                    save_path=grid_path,
+                    max_val=args.plot_max_val
+                )
+                print(f"Saved combined grid scatter plot to: {grid_path}")
+        print(f"Saved individual scatter plots to: {plot_dir}")
 
     if summary_rows:
         df = pd.DataFrame(summary_rows)
