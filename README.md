@@ -62,6 +62,7 @@ VLM(Visual-Language Model) 및 LLM을 호출하여 루브릭 생성, 정합성 �
     *   [`generate_rubrics.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/generate_rubrics.py): 로컬 VLM을 사용하여 레퍼런스 이미지 기반 루브릭 JSON 자동 생성
     *   [`generate_rubrics_efficient.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/generate_rubrics_efficient.py): 배치 및 효율적 파이프라인이 적용된 루브릭 생성 스크립트
 *   **VLM 및 벤치마크 평가**
+*   **루브릭 및 VLM 평가**
     *   [`evaluate_compositional.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/evaluate_compositional.py) / [`evaluate_compositional_efficient.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/evaluate_compositional_efficient.py): 제품의 구성적 요소(Compositional attributes)에 대한 심층 평가
     *   [`evaluate_bbox-crop_efficient.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/evaluate_bbox-crop_efficient.py): Bounding Box 패치 크롭 기반 고해상도 세부 속성 평가
     *   [`eval_dreambench_plus.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/eval_dreambench_plus.py) / [`eval_dreambench_plus_efficient.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/eval_dreambench_plus_efficient.py): DreamBench++ 기준 로컬 VLM 평가
@@ -70,6 +71,9 @@ VLM(Visual-Language Model) 및 LLM을 호출하여 루브릭 생성, 정합성 �
     *   [`eval_clip.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/eval_clip.py): 생성 이미지 세트 간 CLIP 유사도 일괄 측정
     *   [`eval_dino.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/eval_dino.py): 생성 이미지 세트 간 DINO 유사도 일괄 측정
     *   [`eval_consistency.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/eval_consistency.py): 생성 결과물 간 일관성(Consistency) 측정
+*   **키포인트 매칭 및 AKI (Absolute Keypoint Increase) 평가**
+    *   [`eval_AKI.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/eval_AKI.py): Google Research OmniGlue를 사용하여 레퍼런스 이미지와 생성 이미지 간의 대응 키포인트 수($N(M(I_{ref}, I_{gen}))$)를 추출 및 평가
+    *   [`utils/calculate_aki.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/utils/calculate_aki.py): 사전 산출된 키포인트 매칭 결과(`keypoints_results.json`)를 바탕으로 모델 간 절대 키포인트 증가량(AKI) 및 키포인트 매칭 이득($K\_Gain$) 산출
 *   **통계 분석 도구**
     *   [`utils/calculate_rank_alignment.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/utils/calculate_rank_alignment.py): 평가 지표별 Kendall's tau, Spearman rho, Pearson r 및 일치율(Concordance Rate)을 계산하여 랭킹 정합성을 분석하는 도구
 
@@ -105,6 +109,75 @@ HF_XET_HIGH_PERFORMANCE=1 hf download mung3477/Dreambench-Meticulous --local-dir
 
 ---
 
+## 🎯 OmniGlue 기반 키포인트 매칭 및 AKI 설정 가이드
+
+키포인트 보존 평가 스크립트([`eval_AKI.py`](file:///root/Desktop/workspace/woosung/commercial-dreambench/scripts/evaluation/eval_AKI.py))는 Google Research의 **OmniGlue** 패키지와 사전 학습 가중치(`models/`)를 필요로 합니다.
+
+### 1. 가상환경 및 OmniGlue 패키지 설치
+OmniGlue 실행을 위해 격리된 `.venv-AKI` 가상환경을 구성하고 소스 코드를 editable(`-e`) 모드로 설치합니다.
+
+```bash
+# 1) 가상환경 생성 및 활성화
+python3.10 -m venv .venv-AKI
+source .venv-AKI/bin/activate
+
+# 2) PyTorch 설치 (CUDA 12.1 호환 권장)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install tqdm numpy pillow matplotlib pandas einops timm
+
+# 3) OmniGlue 레포지토리 클론 및 설치
+git clone https://github.com/google-research/omniglue.git
+cd omniglue
+pip install -e .
+cd ..
+```
+
+### 2. 사전 학습 모델 가중치 배치 (`models/`)
+OmniGlue 키포인트 매칭은 **SuperPoint**, **DINOv2**, **OmniGlue** 세 가지 모델 체크포인트를 사용합니다. 저장소 루트의 [`models/`](file:///root/Desktop/workspace/woosung/commercial-dreambench/models) 디렉토리를 생성하고 아래 구조로 가중치 파일을 배치합니다:
+
+```
+commercial-dreambench/
+└── models/
+    ├── og_export/                      # OmniGlue 학습 가중치 디렉토리
+    ├── sp_v6/                          # SuperPoint 체크포인트 디렉토리
+    └── dinov2_vitb14_pretrain.pth      # DINOv2 ViT-B/14 사전학습 가중치 파일
+```
+
+> [!NOTE]
+> * `eval_AKI.py` 실행 시 기본적으로 `./models/og_export`, `./models/sp_v6`, `./models/dinov2_vitb14_pretrain.pth` 경로를 탐색합니다.
+> * 커스텀 경로에 배치한 경우 `--og_export`, `--sp_export`, `--dino_export` 인수를 통해 직접 지정할 수 있습니다.
+
+### 3. 키포인트 평가 및 AKI 지표 산출 실행
+
+#### 1) 생성 모델별 대응 키포인트 수 $N(M(I_{ref}, I_{gen}))$ 측정
+```bash
+# 가상환경 활성화
+source .venv-AKI/bin/activate
+
+# 평가 실행 (rating_dir 하위에 모델별 keypoints_results.json 생성)
+python3 scripts/evaluation/eval_AKI.py \
+    --samples_dir samples/ \
+    --data_dir assets/data/amzn/ \
+    --match_threshold 0.02 \
+    --skip_if_done
+```
+
+#### 2) 모델 간 AKI 및 K_Gain 산출
+```bash
+# 기준 모델(baseline_model) 대비 타겟 모델(target_model) 간 비교
+python3 scripts/evaluation/utils/calculate_aki.py \
+    --rating_dir rating/ \
+    --target_model proposed_model \
+    --baseline_model baseline_model
+
+# 전체 모델 간 All-pairs 비교 및 히트맵 매트릭스 시각화
+python3 scripts/evaluation/utils/calculate_aki.py \
+    --rating_dir rating/ \
+    --all_pairs
+```
+
+---
+
 ## ⚙️ 개발 및 실행 환경 (가상환경)
 
 본 프로젝트는 모델 및 라이브러리 간 CUDA/Torch 및 패키지 충돌을 방지하기 위해 작업 영역별로 분리된 가상환경(Virtual Environment)을 운용합니다.
@@ -118,6 +191,7 @@ HF_XET_HIGH_PERFORMANCE=1 hf download mung3477/Dreambench-Meticulous --local-dir
 | **`.venv-niihau-11112`** | **Python 3.12** (3.12.13) | [`requirements_eval.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_eval.txt) | Qwen-VL 기반 루브릭 생성, DreamBench++, VIEScore 등 평가 |
 | **`.venv-qwen-reranker`**| **Python 3.10** (3.10.20) | [`requirements_qwen-rereanker.txt`](file:///root/Desktop/workspace/woosung/commercial-dreambench/requirements_qwen-rereanker.txt) | Qwen3-VL-Reranker-2B 유사도 순위 평가 |
 | **`.venv-vllm`** | **Python 3.11** (3.11.15) | [`requirements_vllm.txt`](requirements_vllm.txt) | vLLM 기반 초고속 대량 추론 파이프라인 |
+| **`.venv-AKI`** | **Python 3.10** | OmniGlue / SuperPoint / DINOv2 | OmniGlue 기반 레퍼런스-생성물 키포인트 매칭 및 AKI/K_Gain 평가 |
 | *(CLIP/DINO 환경)* | **Python 3.11+** | [`requirements_clip-dino.txt`](requirements_clip-dino.txt) | CLIP 및 DINOv2 기반 임베딩 코사인 유사도 평가 (`TypeAlias` 지원 필요) |
 
 > [!WARNING]

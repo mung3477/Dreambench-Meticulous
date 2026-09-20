@@ -22,6 +22,7 @@ __pycache__
 outputs
 samples
 rating
+models
 
 **/deprecated
 **/commercial-PoC
