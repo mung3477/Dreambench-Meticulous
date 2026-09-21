@@ -3,7 +3,6 @@ Your task is to evaluate how faithfully the generated image preserves the identi
 
 ## Inputs
 
-- Evaluation Rubrics
 - Reference Image (Image1)
 - Generated Image (Image2)
 
