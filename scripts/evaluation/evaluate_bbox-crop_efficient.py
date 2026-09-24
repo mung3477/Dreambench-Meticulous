@@ -1673,8 +1673,15 @@ def find_image_pairs(
 # 9. Check Target Completion for --skip_if_done
 # ==============================================================================
 
-def get_metric_output_tag(metric_name: str, judge_model: Optional[str] = None, reverse_image_order: bool = False) -> str:
-    """Returns the file/diagnostic tag for a metric, appending the judge model name for 'ours', and '_image-reversed' if reversed."""
+def get_metric_output_tag(
+    metric_name: str,
+    judge_model: Optional[str] = None,
+    reverse_image_order: bool = False,
+    output_tag_suffix: Optional[str] = None,
+    append_crop_size: bool = False,
+    min_crop_size: Optional[int] = None,
+) -> str:
+    """Returns the file/diagnostic tag for a metric, appending the judge model name for 'ours', '_image-reversed' if reversed, and crop size suffix if requested."""
     if metric_name == "ours" and judge_model:
         model_tag = Path(judge_model).name
         tag = f"ours-{model_tag}"
@@ -1682,6 +1689,11 @@ def get_metric_output_tag(metric_name: str, judge_model: Optional[str] = None, r
         tag = metric_name
     if reverse_image_order:
         tag = f"{tag}_image-reversed"
+    if append_crop_size and min_crop_size is not None:
+        tag = f"{tag}_crop-{min_crop_size}"
+    if output_tag_suffix:
+        suffix = output_tag_suffix if output_tag_suffix.startswith(("_", "-")) else f"_{output_tag_suffix}"
+        tag = f"{tag}{suffix}"
     return tag
 
 
@@ -1690,7 +1702,10 @@ def filter_missing_eval_targets(
     eval_pairs: List[Dict[str, Any]],
     metrics: List[str],
     judge_model: Optional[str] = None,
-    reverse_image_order: bool = False
+    reverse_image_order: bool = False,
+    output_tag_suffix: Optional[str] = None,
+    append_crop_size: bool = False,
+    min_crop_size: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Splits eval_pairs into (missing_pairs, completed_pairs).
@@ -1704,10 +1719,34 @@ def filter_missing_eval_targets(
 
     existing_ratings: Dict[str, Dict[str, Any]] = {}
     for m in metrics:
-        tag = get_metric_output_tag(m, judge_model, reverse_image_order=reverse_image_order)
+        tag = get_metric_output_tag(
+            m,
+            judge_model,
+            reverse_image_order=reverse_image_order,
+            output_tag_suffix=output_tag_suffix,
+            append_crop_size=append_crop_size,
+            min_crop_size=min_crop_size,
+        )
         rating_file = rating_dir / f"{tag}_bbox-crop_results.json"
-        # Only fall back to legacy 'ours_bbox-crop_results.json' if not reversed and using original default 32B model
-        if not reverse_image_order and not rating_file.exists() and m == "ours" and judge_model in ["Qwen/Qwen3-VL-32B-Instruct", "Qwen3-VL-32B-Instruct", None]:
+        # 1. Fall back to un-suffixed file if min_crop_size == 224 (all un-suffixed ratings are 224px crop size)
+        if append_crop_size and min_crop_size == 224 and not rating_file.exists():
+            base_tag = get_metric_output_tag(
+                m,
+                judge_model,
+                reverse_image_order=reverse_image_order,
+                output_tag_suffix=output_tag_suffix,
+                append_crop_size=False,
+            )
+            base_file = rating_dir / f"{base_tag}_bbox-crop_results.json"
+            if base_file.exists():
+                rating_file = base_file
+            elif not reverse_image_order and not output_tag_suffix and m == "ours" and judge_model in ["Qwen/Qwen3-VL-32B-Instruct", "Qwen3-VL-32B-Instruct", None]:
+                legacy_file = rating_dir / f"{m}_bbox-crop_results.json"
+                if legacy_file.exists():
+                    rating_file = legacy_file
+
+        # 2. Only fall back to legacy 'ours_bbox-crop_results.json' if not reversed, no crop tag, and using original default 32B model
+        elif not reverse_image_order and not append_crop_size and not output_tag_suffix and not rating_file.exists() and m == "ours" and judge_model in ["Qwen/Qwen3-VL-32B-Instruct", "Qwen3-VL-32B-Instruct", None]:
             legacy_file = rating_dir / f"{m}_bbox-crop_results.json"
             if legacy_file.exists():
                 rating_file = legacy_file
@@ -1754,9 +1793,21 @@ def check_eval_targets_completed(
     eval_pairs: List[Dict[str, Any]],
     metrics: List[str],
     judge_model: Optional[str] = None,
-    reverse_image_order: bool = False
+    reverse_image_order: bool = False,
+    output_tag_suffix: Optional[str] = None,
+    append_crop_size: bool = False,
+    min_crop_size: Optional[int] = None,
 ) -> bool:
-    missing, _ = filter_missing_eval_targets(rating_dir, eval_pairs, metrics, judge_model=judge_model, reverse_image_order=reverse_image_order)
+    missing, _ = filter_missing_eval_targets(
+        rating_dir,
+        eval_pairs,
+        metrics,
+        judge_model=judge_model,
+        reverse_image_order=reverse_image_order,
+        output_tag_suffix=output_tag_suffix,
+        append_crop_size=append_crop_size,
+        min_crop_size=min_crop_size,
+    )
     return len(missing) == 0
 
 
@@ -1798,6 +1849,8 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size for metric inference")
     parser.add_argument("--vllm_chunk_size", type=int, default=1024, help="Chunk size for vLLM detection batches to cap RAM usage")
     parser.add_argument("--reverse_image_order", action="store_true", help="Reverse image presentation order (Generated Image first, Reference Image second) to evaluate MLLM positional bias")
+    parser.add_argument("--output_tag_suffix", type=str, default="", help="Custom suffix to append to output metric tags and result filenames")
+    parser.add_argument("--append_crop_size", action="store_true", help="Append _crop-{min_crop_size} to output metric tags and result filenames")
     return parser.parse_args()
 
 
@@ -1809,7 +1862,13 @@ def main():
     rating_dir = Path(args.rating_dir) if args.rating_dir else out_dir
     rating_dir.mkdir(parents=True, exist_ok=True)
 
-    vis_dir = (out_dir / "bbox_visualizations") if args.save_visualizations else None
+    vis_dir_name = "bbox_visualizations"
+    if args.append_crop_size and args.min_crop_size is not None:
+        vis_dir_name = f"{vis_dir_name}_crop-{args.min_crop_size}"
+    if args.output_tag_suffix:
+        suffix = args.output_tag_suffix if args.output_tag_suffix.startswith(("_", "-")) else f"_{args.output_tag_suffix}"
+        vis_dir_name = f"{vis_dir_name}{suffix}"
+    vis_dir = (out_dir / vis_dir_name) if args.save_visualizations else None
     clean_metrics = [m for m in (args.metrics or []) if m != "none"]
 
     # 1. Build Evaluation Pairs
@@ -1846,15 +1905,63 @@ def main():
 
     # 2. Identify missing evaluation pairs
     if clean_metrics:
-        missing_pairs, completed_pairs = filter_missing_eval_targets(rating_dir, eval_pairs, clean_metrics, judge_model=judge_model)
         missing_pairs, completed_pairs = filter_missing_eval_targets(
-            rating_dir, eval_pairs, clean_metrics, judge_model=judge_model, reverse_image_order=args.reverse_image_order
+            rating_dir,
+            eval_pairs,
+            clean_metrics,
+            judge_model=judge_model,
+            reverse_image_order=args.reverse_image_order,
+            output_tag_suffix=args.output_tag_suffix,
+            append_crop_size=args.append_crop_size,
+            min_crop_size=args.min_crop_size,
         )
         print(f"[Main] Status: {len(completed_pairs)} already completed, {len(missing_pairs)} missing or incomplete.")
 
         if args.skip_if_done:
             if not missing_pairs:
                 print(f"[Skip] All {len(eval_pairs)} target items are verified complete in {rating_dir} for metrics {clean_metrics}. Skipping evaluation.")
+                # If 224px crop size was matched via baseline file and crop-specific file doesn't exist, sync it
+                if args.append_crop_size and args.min_crop_size == 224:
+                    for m in clean_metrics:
+                        crop_tag = get_metric_output_tag(
+                            m,
+                            judge_model,
+                            reverse_image_order=args.reverse_image_order,
+                            output_tag_suffix=args.output_tag_suffix,
+                            append_crop_size=True,
+                            min_crop_size=224,
+                        )
+                        crop_rating_file = rating_dir / f"{crop_tag}_bbox-crop_results.json"
+                        if not crop_rating_file.exists():
+                            base_tag = get_metric_output_tag(
+                                m,
+                                judge_model,
+                                reverse_image_order=args.reverse_image_order,
+                                output_tag_suffix=args.output_tag_suffix,
+                                append_crop_size=False,
+                            )
+                            base_rating_file = rating_dir / f"{base_tag}_bbox-crop_results.json"
+                            if not base_rating_file.exists() and m == "ours" and not args.reverse_image_order and not args.output_tag_suffix:
+                                legacy_file = rating_dir / f"{m}_bbox-crop_results.json"
+                                if legacy_file.exists():
+                                    base_rating_file = legacy_file
+                            if base_rating_file.exists():
+                                try:
+                                    import shutil
+                                    shutil.copy2(base_rating_file, crop_rating_file)
+                                    print(f"[Sync] Synced 224px baseline rating file {base_rating_file.name} -> {crop_rating_file.name}")
+                                except Exception as e:
+                                    print(f"[Warning] Could not sync 224px rating file: {e}")
+
+                                base_diag = out_dir / f"evaluation_results_{base_tag}.json"
+                                crop_diag = out_dir / f"evaluation_results_{crop_tag}.json"
+                                if base_diag.exists() and not crop_diag.exists():
+                                    try:
+                                        import shutil
+                                        shutil.copy2(base_diag, crop_diag)
+                                        print(f"[Sync] Synced 224px baseline diagnostics {base_diag.name} -> {crop_diag.name}")
+                                    except Exception:
+                                        pass
                 sys.exit(0)
             else:
                 print(f"[Run] {len(missing_pairs)}/{len(eval_pairs)} targets need evaluation in {rating_dir}. Evaluating only missing items...")
@@ -1906,7 +2013,14 @@ def main():
     # 6. Save Standard Flat Rating Files ({metric}_bbox-crop_results.json) & Merge Diagnostics
     if clean_metrics and not results.get("detection_only", False):
         for m in clean_metrics:
-            m_tag = get_metric_output_tag(m, judge_model, reverse_image_order=args.reverse_image_order)
+            m_tag = get_metric_output_tag(
+                m,
+                judge_model,
+                reverse_image_order=args.reverse_image_order,
+                output_tag_suffix=args.output_tag_suffix,
+                append_crop_size=args.append_crop_size,
+                min_crop_size=args.min_crop_size,
+            )
 
             # Build metric-specific detailed result dictionary for new results
             metric_pair_details = []
