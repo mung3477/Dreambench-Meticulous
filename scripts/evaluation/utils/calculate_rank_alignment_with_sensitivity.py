@@ -26,7 +26,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 from scipy.stats import kendalltau, spearmanr, pearsonr
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt, matplotlib.patches as mpatches
 
 # Full Dictionary of Noise Strength Steps (Ordered Weakest Noise -> Strongest Noise)
 NOISE_STRENGTH_DICT = {
@@ -102,25 +102,28 @@ PRESET_SEQUENCES = {
 }
 
 metric_files = {
-    # "CLIP": "clip_results.json",
-    # "DINO": "dino_results.json",
-    # "DreamBench++": "dreambench_plus_results.json",
-    # "VIEScore": "viescore_results.json",
-    # "keypoints": "keypoints_results.json",
+    "CLIP": "clip_results.json",
+    "DINO": "dino_results.json",
+    "DreamBench++": "dreambench_plus_results.json",
+    "VIEScore": "viescore_results.json",
+    "Keypoints": "keypoints_results.json",
     # "Qwen-Reranker": "qwen_reranker_results.json",
     # "CLIP_bbox-crop": "clip_bbox-crop_results.json",
     # "DINO_bbox-crop": "dino_bbox-crop_results.json",
     # "Qwen-Reranker_bbox-crop": "qwen_reranker_bbox-crop_results.json",
-    "Qwen3-VL-8B_bbox-crop": "ours-Qwen3-VL-8B-Instruct_bbox-crop_results.json",
+    "Ours": "ours-Qwen3-VL-8B-Instruct_bbox-crop_results.json",
     # "Qwen3-VL-8B_bbox-crop_reversed": "ours-Qwen3-VL-8B-Instruct_image-reversed_bbox-crop_results.json",
     # "Qwen3-VL-32B_bbox-crop": "ours_bbox-crop_results.json",
     # "GLM-4.6V-Flash_bbox-crop": "ours-GLM-4.6V-Flash_bbox-crop_results.json",
     # "InternVL3-8B_bbox-crop": "ours-InternVL3-8B_bbox-crop_results.json",
-    "Qwen3-VL-8B_bbox-overlay": "ours-Qwen3-VL-8B-Instruct_bbox-overlay_results.json",
-    "Ours_each_item": "ours/each_item/summary.json",
+    # "Qwen3-VL-8B_bbox-overlay": "ours-Qwen3-VL-8B-Instruct_bbox-overlay_results.json",
+    # "Ours_each_item": "ours/each_item/summary.json",
+    # "Qwen3-VL-8B_coarse-bbox-crop": "ours-Qwen3-VL-8B-Instruct_coarse_bbox-crop_results.json",
+    # "Qwen3-VL-8B_fine-bbox-crop": "ours-Qwen3-VL-8B-Instruct_fine_bbox-crop_results.json",
 }
 
 # Dense sweep vectors
+# ZSCORE_THRESHOLDS_K = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 ZSCORE_THRESHOLDS_K = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 def parse_args():
@@ -663,26 +666,44 @@ def generate_publication_plots(curve_records_z, output_dir, dimension_name):
         "Ours_each_item": "#9467bd",
     }
 
-    fig, ax = plt.subplots(figsize=(9, 6), dpi=300)
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "DejaVu Serif", "STIXGeneral", "Liberation Serif"],
+        "mathtext.fontset": "stix",       # STIX provides Times New Roman-compatible math styling on Linux
+        "axes.titlesize": 16,
+        "axes.titleweight": "bold",
+        "axes.labelsize": 14,
+        "axes.labelweight": "bold",
+    })
+
+    fig, ax = plt.subplots(figsize=(4, 5), dpi=300)
     for metric_name, pts in curve_records_z.items():
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         color = color_map.get(metric_name, None)
         lw = 2.5 if "Ours" in metric_name or "Qwen3" in metric_name else 1.8
         ls = "-" if "crop" in metric_name.lower() or "Ours" in metric_name else "--"
-        label = metric_name.replace("_bbox-crop", " (Crop)").replace("Ours-", "Ours: ")
+        # label = metric_name.replace("_bbox-crop", " (Crop)").replace("Ours-", "Ours: ")
+        label = "MetMag(Ours)" if "Ours" in metric_name else metric_name.replace("_bbox-crop", " (Crop)").replace("Ours-", "Ours: ")
         ax.plot(xs, ys, label=label, color=color, linewidth=lw, linestyle=ls, marker="s" if "Ours" in metric_name else None, markersize=4)
 
-    ax.set_title(f"Scale-Normalized Stability Curve ({dimension_name})\nConcordance vs. Z-Score Margin Threshold ($k\\cdot\\sigma$)", fontsize=13, fontweight="bold", pad=12)
-    ax.set_xlabel("Normalized Margin Threshold $k \\cdot \\sigma$", fontsize=11, fontweight="bold")
-    ax.set_ylabel("Strict Concordance Rate (%)", fontsize=11, fontweight="bold")
-    ax.set_xlim(-0.02, 1.02)
+    # ax.set_title(f"Scale-Normalized Stability Curve ({dimension_name})\nConcordance vs. Z-Score Margin Threshold ($k\\cdot\\sigma$)", fontsize=13, fontweight="bold", pad=12)
+    ax.set_xlabel("Threshold $k$", fontsize=14, fontweight="normal")
+    ax.set_ylabel("Pairwise Accuracy (%)", fontsize=14, fontweight="normal")
+    ax.set_xlim(0, 0.52)
     ax.set_ylim(0, 100)
-    ax.axhline(50, color="gray", linestyle=":", linewidth=1.2, label="Random Chance (50%)")
-    ax.grid(True, linestyle="--", alpha=0.6)
-    ax.legend(fontsize=8, loc="upper right", framealpha=0.9)
+    ax.axhline(50, color="gray", linestyle=":", linewidth=1.2)
+    handles, labels = ax.get_legend_handles_labels()
+    ncols = (len(labels) + 1) // 3
+    remainder = len(labels) % ncols
+    if remainder != 0:
+        n_missing = ncols - remainder
+        blank_handle = mpatches.Rectangle((0, 0), 0, 0, fill=False, edgecolor="none", visible=False)
+        handles = handles[:-remainder] + [blank_handle] * n_missing + handles[-remainder:]
+        labels = labels[:-remainder] + [""] * n_missing + labels[-remainder:]
+    ax.legend(handles, labels, fontsize=10, loc="upper center", framealpha=0.5, ncols=ncols)
 
-    plot_path_z = os.path.join(output_dir, "epsilon_sweep_zscore.png")
+    plot_path_z = os.path.join(output_dir, "fig_controlled_distortion_AUC.pdf")
     fig.savefig(plot_path_z, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved Z-Score Sweep Plot: {plot_path_z}")
@@ -729,12 +750,11 @@ def main():
 
         results.append({
             "Metric": m,
-            "Images": res["num_images"],
-            "Pairs": res["total_pairs"],
-            "Strict Conc %": res["strict_concordance"],
+            # "Images": res["num_images"],
+            # "Pairs": res["total_pairs"],
+            "Pairwise Accuracy %": res["strict_concordance"],
             "Tie Rate %": res["tie_rate_mean"],
-            "AUCC (Z-Score)": res["aucc_zscore"],
-            "Cohen's d (Mild)": res["cohens_d_subtle"],
+            "AUC_z": res["aucc_zscore"],
         })
 
     df = pd.DataFrame(results)
@@ -756,12 +776,12 @@ def main():
         step1_name = sequence[1][0].split("_")[0]
         step2_name = sequence[2][0].split("_")[0]
 
-        col_om_conc = f"Conc ({step0_name}->{step1_name}) %"
-        col_om_aucc = f"AUCC_z ({step0_name}->{step1_name})"
-        col_ms_conc = f"Conc ({step1_name}->{step2_name}) %"
-        col_ms_aucc = f"AUCC_z ({step1_name}->{step2_name})"
-        col_os_conc = f"Conc ({step0_name}->{step2_name}) %"
-        col_os_aucc = f"AUCC_z ({step0_name}->{step2_name})"
+        col_om_conc = f"Acc. ({step0_name}->{step1_name}) %"
+        col_om_aucc = f"AUC_z ({step0_name}->{step1_name})"
+        col_ms_conc = f"Acc. ({step1_name}->{step2_name}) %"
+        col_ms_aucc = f"AUC_z ({step1_name}->{step2_name})"
+        col_os_conc = f"Acc. ({step0_name}->{step2_name}) %"
+        col_os_aucc = f"AUC_z ({step0_name}->{step2_name})"
 
         decomp_rows = []
         for m in metrics:
